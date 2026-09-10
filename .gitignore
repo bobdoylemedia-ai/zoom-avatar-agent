@@ -1,0 +1,23 @@
+.env
+.env.local
+.venv/
+__pycache__/
+*.pyc
+.fastembed_cache/
+uv.lock
+
+# Avatar portraits and knowledge sources are personal / licensed material.
+avatars/*
+!avatars/.gitkeep
+knowledge/*
+!knowledge/.gitkeep
+presets.json
+
+# Your own logo, if you add one.
+brand/*
+!brand/.gitkeep
+
+# Meeting transcripts and recaps are private meeting content.
+meetings/*
+!meetings/.gitkeep
+logs/

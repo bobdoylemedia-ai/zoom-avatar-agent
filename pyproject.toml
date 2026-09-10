@@ -1,0 +1,29 @@
+[project]
+name = "zoom-avatar-agent"
+version = "0.1.0"
+description = "Send a LemonSlice avatar with a custom voice and knowledge base into a Zoom / Meet / Teams / Webex meeting"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    # join_meeting() shipped in the 1.8 line (livekit-plugins-lemonslice 1.8.0,
+    # 2026-09-05). The 07-livekit-zoom example predates that and pins the plugin
+    # to git main -- not needed any more.
+    "livekit-agents[lemonslice]>=1.8",
+    "livekit-plugins-fishaudio>=1.6.6",
+    # NOTE: no livekit-plugins-noise-cancellation. In meeting mode
+    # avatar.room_options() sets audio_input=False -- meeting audio is fed
+    # straight into STT, so there is no LiveKit room audio input for BVC to
+    # filter. The browser app used it; here it would be a dead dependency.
+    "python-dotenv>=1.0.0",
+    # Knowledge base: on-device embeddings + document text extraction.
+    "fastembed>=0.8.0",
+    "pypdf>=5.0.0",
+    "python-docx>=1.1.0",
+    "reportlab>=5.0.1",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
+    "python-multipart>=0.0.32",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,1436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zoom Avatar Generator</title>
+<link rel="icon" href="/brand/logo-small.png">
+<style>
+  /* Brand colours stay put in both themes; everything else is a token so the
+     dark palette is a single override block rather than a second stylesheet. */
+  :root {
+    --blue: #13A4E0;
+    --purple: #A800FF;
+    --ink: #16181d;
+    --muted: #6b7280;
+    --line: #e3e6ea;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --field: #ffffff;
+    --raise: #fbfcfd;
+    --ok: #12855b;
+    --warn: #9a6400;
+    --bad: #c0392b;
+    --ok-bg: #e8f7f0;   --ok-line: #b6e2cd;   --ok-ink: #0d5c40;
+    --bad-bg: #fdecea;  --bad-line: #f5c2bc;  --bad-ink: #8c2318;
+    --info-bg: #eaf6fd; --info-line: #bfe2f5; --info-ink: #0b5674;
+    --radius: 10px;
+    color-scheme: light;
+  }
+
+  /* Dark values live once and are applied by an explicit choice or, absent a
+     choice, by the operating system. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e9ecf1;
+      --muted: #99a2b0;
+      --line: #2b3140;
+      --bg: #0f1218;
+      --card: #171b23;
+      --field: #1d222c;
+      --raise: #222834;
+      --ok: #3ddc9a;
+      --bad: #ff8a7a;
+      --ok-bg: #10261e;   --ok-line: #1f4a38;   --ok-ink: #8ae9c1;
+      --bad-bg: #2a1614;  --bad-line: #5a2a24;  --bad-ink: #ffb3a7;
+      --info-bg: #0f2430; --info-line: #1d475c; --info-ink: #9fdcf5;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e9ecf1;
+    --muted: #99a2b0;
+    --line: #2b3140;
+    --bg: #0f1218;
+    --card: #171b23;
+    --field: #1d222c;
+    --raise: #222834;
+    --ok: #3ddc9a;
+    --bad: #ff8a7a;
+    --ok-bg: #10261e;   --ok-line: #1f4a38;   --ok-ink: #8ae9c1;
+    --bad-bg: #2a1614;  --bad-line: #5a2a24;  --bad-ink: #ffb3a7;
+    --info-bg: #0f2430; --info-line: #1d475c; --info-ink: #9fdcf5;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  header {
+    background: var(--card); border-bottom: 1px solid var(--line);
+    padding: 14px 22px; display: flex; align-items: center; gap: 16px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 17px; font-weight: 650; line-height: 1.2; }
+  header h1 span { color: var(--blue); }
+  header .brand p {
+    margin: 1px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--purple);
+  }
+  .logo { width: 38px; height: 38px; flex: none; }
+  button.icon { padding: 6px 9px; font-size: 15px; line-height: 1; }
+  .spacer { flex: 1; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--line); background: var(--raise);
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); }
+  .dot.starting { background: var(--warn); }
+  .dot.off { background: var(--line); }
+
+  main { max-width: 1120px; margin: 0 auto; padding: 22px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px; margin-bottom: 18px;
+  }
+  .card h2 {
+    margin: 0 0 14px; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .05em; color: var(--purple);
+  }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 0 0 5px; }
+  .hint { font-size: 12.5px; color: var(--muted); margin: 5px 0 0; }
+  .field { margin-bottom: 15px; }
+  .field:last-child { margin-bottom: 0; }
+
+  input[type=text], input[type=url], select, textarea {
+    width: 100%; padding: 9px 10px; font: inherit; font-size: 14px;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--field); color: var(--ink);
+  }
+  textarea { min-height: 96px; resize: vertical; line-height: 1.45; }
+  input:focus, select:focus, textarea:focus {
+    outline: 2px solid color-mix(in srgb, var(--blue) 45%, transparent); outline-offset: 1px;
+    border-color: var(--blue);
+  }
+  select[size] { padding: 4px; }
+
+  button {
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    padding: 9px 15px; border-radius: 7px; border: 1px solid var(--line);
+    background: var(--field); color: var(--ink);
+  }
+  button:hover:not(:disabled) { border-color: var(--muted); background: var(--raise); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary {
+    background: var(--blue); border-color: var(--blue); color: #fff;
+    padding: 11px 20px; font-size: 15px;
+  }
+  button.primary:hover:not(:disabled) { background: #0f93c9; border-color: #0f93c9; }
+  button.small { padding: 6px 11px; font-size: 13px; font-weight: 500; }
+  button.danger { color: var(--bad); }
+  .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+
+  .avatar-row { display: flex; gap: 14px; align-items: flex-start; }
+  .avatar-row > div:first-child { flex: 1; min-width: 0; }
+  .thumb {
+    width: 92px; height: 112px; border-radius: 8px; object-fit: cover;
+    border: 1px solid var(--line); background: var(--raise); flex: none;
+  }
+  .thumb.empty { display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: var(--muted); text-align: center; padding: 6px; }
+
+  .check { display: flex; gap: 9px; align-items: flex-start; margin-bottom: 11px; }
+  .check input { margin: 3px 0 0; flex: none; width: 16px; height: 16px; accent-color: var(--blue); }
+  .check label { margin: 0; font-weight: 600; }
+  .check .hint { margin: 2px 0 0; }
+
+  .msg { padding: 11px 13px; border-radius: 7px; font-size: 13.5px; margin-top: 14px;
+    white-space: pre-wrap; word-break: break-word; display: none; }
+  .msg.show { display: block; }
+  .msg.ok { background: var(--ok-bg); border: 1px solid var(--ok-line); color: var(--ok-ink); }
+  .msg.bad { background: var(--bad-bg); border: 1px solid var(--bad-line); color: var(--bad-ink); }
+  .msg.info { background: var(--info-bg); border: 1px solid var(--info-line); color: var(--info-ink); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; }
+  td a { color: var(--blue); text-decoration: none; font-weight: 600; }
+  td a:hover { text-decoration: underline; }
+  .empty-note { color: var(--muted); font-size: 13.5px; }
+
+  details { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+  details summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+  pre.log {
+    background: #0b0d11; color: #cdd3db; padding: 12px; border-radius: 7px;
+    font: 12px/1.5 Consolas, "Courier New", monospace; overflow: auto;
+    max-height: 300px; margin: 11px 0 0; white-space: pre-wrap;
+  }
+  .filter { margin-bottom: 6px; }
+
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tab {
+    padding: 7px 12px; font-size: 13px; font-weight: 600; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--field); color: var(--muted);
+  }
+  .tab.active {
+    border-color: var(--blue); color: var(--blue);
+    background: color-mix(in srgb, var(--blue) 12%, transparent);
+  }
+  .timer { font: 600 13px/1 Consolas, monospace; color: var(--muted); }
+  .timer.hot { color: var(--bad); }
+  .meter {
+    height: 6px; border-radius: 999px; background: var(--line);
+    overflow: hidden; margin: 10px 0 0;
+  }
+  .meter-fill {
+    height: 100%; width: 0%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--blue), var(--purple));
+    transition: width .1s linear;
+  }
+  #wave {
+    width: 100%; height: 72px; display: block; border-radius: 7px;
+    background: var(--field); border: 1px solid var(--line);
+  }
+  .trim-row {
+    display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 8px;
+    align-items: center; margin-top: 8px;
+  }
+  .trim-row input[type=range] { width: 100%; accent-color: var(--blue); }
+  .trim-label { font: 600 12px/1 Consolas, monospace; color: var(--muted); }
+  .candidate {
+    display: flex; gap: 10px; align-items: center; padding: 9px 0;
+    border-bottom: 1px solid var(--line); font-size: 13.5px;
+  }
+  .candidate:last-child { border-bottom: 0; }
+  .candidate audio { height: 32px; flex: 1; min-width: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/brand/logo-small.png" alt="" class="logo" id="logo" onerror="this.remove()">
+  <div class="brand">
+    <h1>Zoom <span>Avatar Generator</span></h1>
+    <p id="brandName" hidden></p>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill"><span class="dot off" id="dot"></span><span id="workerText">checking…</span></span>
+  <button class="small" id="btnStart">Start agent</button>
+  <button class="small" id="btnStop">Stop</button>
+  <button class="small icon" id="btnTheme" title="Switch between light and dark">🌙</button>
+</header>
+
+<main>
+  <div class="grid">
+
+    <!-- ---------------- left: who the avatar is ---------------- -->
+    <div>
+      <div class="card">
+        <h2>Preset</h2>
+        <div class="field">
+          <select id="preset">
+            <option value="">— nothing loaded —</option>
+          </select>
+          <p class="hint">Loading a preset fills in the face, voice, knowledge base and persona below.</p>
+        </div>
+        <div class="row">
+          <input type="text" id="presetName" placeholder="Name to save as" style="flex:1;min-width:150px">
+          <button class="small" id="btnSavePreset">Save preset</button>
+          <button class="small danger" id="btnDeletePreset">Delete</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Face</h2>
+        <div class="avatar-row">
+          <div>
+            <div class="field">
+              <select id="image"></select>
+              <p class="hint">Any size or shape — it gets resized automatically.</p>
+            </div>
+            <div class="row">
+              <input type="file" id="imageFile" accept="image/jpeg,image/png,image/webp" style="display:none">
+              <button class="small" id="btnUploadImage">Upload a photo…</button>
+            </div>
+          </div>
+          <img class="thumb" id="thumb" alt="Selected avatar">
+          <div class="thumb empty" id="thumbEmpty" style="display:none">no photo selected</div>
+        </div>
+        <div class="msg" id="imageMsg"></div>
+      </div>
+
+      <div class="card">
+        <h2>Voice</h2>
+        <div class="field">
+          <input type="text" class="filter" id="voiceFilter" placeholder="Type to filter…">
+          <select id="voice"></select>
+          <p class="hint" id="voiceHint"></p>
+        </div>
+        <div class="row">
+          <button class="small" id="btnPreviewVoice">Hear this voice</button>
+          <button class="small" id="btnRefreshVoices">Refresh from Fish Audio</button>
+          <button class="small" id="btnNewVoice">Create a new voice…</button>
+        </div>
+        <audio id="voiceAudio" controls style="display:none;width:100%;margin-top:12px"></audio>
+        <div class="msg" id="voiceMsg"></div>
+
+        <!-- ---------- voice creation ---------- -->
+        <div id="voiceMaker" style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:16px">
+          <div class="tabs">
+            <button class="tab active" data-mode="upload">Upload audio</button>
+            <button class="tab" data-mode="record">Record now</button>
+            <button class="tab" data-mode="describe">Describe it</button>
+          </div>
+
+          <div class="field" style="margin-top:14px">
+            <label for="newVoiceName">Name for the new voice</label>
+            <input type="text" id="newVoiceName" placeholder="e.g. Bob Warm Narration">
+          </div>
+
+          <!-- upload -->
+          <div class="mode" id="modeUpload">
+            <input type="file" id="voiceFile" accept="audio/*,video/*" style="display:none">
+            <button class="small" id="btnPickAudio">Choose an audio file…</button>
+            <p class="hint">Speech only, no music or background noise. Up to 30 seconds is
+              used — if the file is longer, trim it below.</p>
+          </div>
+
+          <!-- record -->
+          <div class="mode" id="modeRecord" style="display:none">
+            <div class="row">
+              <button class="small" id="btnRecord">Start recording</button>
+              <span class="timer" id="recTimer">0.0s / 30s</span>
+            </div>
+            <div class="meter"><div class="meter-fill" id="recBar"></div></div>
+            <div class="msg" id="recMsg"></div>
+            <p class="hint">Read a couple of sentences in your normal voice. It stops
+              itself at 30 seconds. Aim for at least 10.</p>
+          </div>
+
+          <!-- describe -->
+          <div class="mode" id="modeDescribe" style="display:none">
+            <div class="field">
+              <label for="voiceDesc">Describe the voice</label>
+              <textarea id="voiceDesc" placeholder="e.g. A warm, confident middle-aged American man with a friendly studio-narrator tone"></textarea>
+            </div>
+            <div class="field">
+              <label for="voiceSampleLine">Line for it to read (optional)</label>
+              <input type="text" id="voiceSampleLine" maxlength="150"
+                     placeholder="Hi, this is how I'll sound in your meetings.">
+            </div>
+            <button class="small" id="btnDesign">Generate voices</button>
+            <div id="candidates"></div>
+          </div>
+
+          <!-- shared trim + save -->
+          <div id="trimBox" style="display:none;margin-top:14px">
+            <label>Trim the sample</label>
+            <canvas id="wave" height="72"></canvas>
+            <div class="trim-row">
+              <span class="trim-label" id="trimStartLabel">0.0s</span>
+              <input type="range" id="trimStart" min="0" max="1000" value="0">
+              <span class="trim-label" id="trimEndLabel">0.0s</span>
+              <input type="range" id="trimEnd" min="0" max="1000" value="1000">
+            </div>
+            <p class="hint" id="trimHint"></p>
+            <div class="row">
+              <button class="small" id="btnPlayTrim">Play selection</button>
+              <button class="small" id="btnResetTrim">Reset</button>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:14px">
+            <button class="primary" id="btnCreateVoice" style="padding:9px 16px;font-size:14px">Create voice</button>
+            <button class="small" id="btnCancelVoice">Cancel</button>
+          </div>
+          <div class="msg" id="makerMsg"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Knowledge base</h2>
+        <div class="field">
+          <select id="knowledge"></select>
+          <p class="hint" id="kbHint">What the avatar knows. Leave empty for none.</p>
+        </div>
+        <div class="row">
+          <input type="text" id="kbName" placeholder="New knowledge base name" style="flex:1;min-width:160px">
+          <input type="file" id="kbFiles" accept=".pdf,.docx,.txt,.md" multiple style="display:none">
+          <button class="small" id="btnUploadKb">Add documents…</button>
+        </div>
+        <p class="hint">PDF, Word, text or markdown. Several files become one knowledge base.</p>
+        <div class="msg" id="kbMsg"></div>
+      </div>
+
+      <div class="card">
+        <h2>Persona</h2>
+        <div class="field">
+          <textarea id="persona" placeholder="Leave empty to use the preset's persona, or the built-in default."></textarea>
+          <p class="hint">How it should behave. The knowledge base supplies the facts.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------------- right: send it ---------------- -->
+    <div>
+      <div class="card">
+        <h2>Send to a meeting</h2>
+        <div class="field">
+          <label for="meetingUrl">Meeting link</label>
+          <input type="url" id="meetingUrl" placeholder="https://us02web.zoom.us/j/1234567890?pwd=…">
+          <p class="hint">For Zoom the passcode must be in the link (the <code>?pwd=</code> part).</p>
+        </div>
+        <div class="field">
+          <label for="botName">Display name in the meeting</label>
+          <input type="text" id="botName">
+          <p class="hint">What other people see in the participant list. This is also
+            the name they say to get its attention.</p>
+        </div>
+        <div class="field">
+          <label for="ownerName">Attending on behalf of</label>
+          <input type="text" id="ownerName" placeholder="e.g. Jane Smith">
+          <p class="hint">Whose stand-in this is. It says so when it joins, answers
+            "who is your owner?" with it, and promises messages will reach them by
+            name. Saved with the preset.</p>
+        </div>
+
+        <div class="check">
+          <input type="checkbox" id="requireAddress" checked>
+          <div>
+            <label for="requireAddress">Only speak when spoken to</label>
+            <p class="hint">Recommended whenever anyone else is in the call. It stays quiet unless someone says its name.</p>
+          </div>
+        </div>
+        <div class="check">
+          <input type="checkbox" id="announce" checked>
+          <div>
+            <label for="announce">Introduce itself as an AI on joining</label>
+            <p class="hint">Leave this on. Courtesy, and the safe side of recording-consent law.</p>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:6px">
+          <button class="primary" id="btnGo">Send avatar to meeting</button>
+        </div>
+        <div class="msg" id="sendMsg"></div>
+      </div>
+
+      <div class="card">
+        <h2>Recent meeting notes</h2>
+        <div class="msg" id="pendingMsg"></div>
+        <div id="meetings"><p class="empty-note">No meetings yet.</p></div>
+        <p class="hint">Notes are written when the meeting ends. A row showing only
+          <code>jsonl</code> has a transcript but no write-up yet.</p>
+        <div class="row" style="margin-top:10px">
+          <button class="small" id="btnBackfill">Write any missing notes</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Agent status</h2>
+        <p class="hint" id="statusLine">—</p>
+        <details id="logBox">
+          <summary>Show agent log</summary>
+          <pre class="log" id="log">nothing yet</pre>
+        </details>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------- theme
+// An explicit choice is stamped on <html> and remembered. With no choice
+// stored, nothing is stamped and the OS preference applies via CSS.
+const THEME_KEY = "bdm-avatar-theme";
+
+function systemPrefersDark() {
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function currentlyDark() {
+  const set = document.documentElement.getAttribute("data-theme");
+  return set ? set === "dark" : systemPrefersDark();
+}
+
+function paintThemeButton() {
+  const btn = $("btnTheme");
+  if (!btn) return;
+  const dark = currentlyDark();
+  btn.textContent = dark ? "☀️" : "🌙";
+  btn.title = dark ? "Switch to light mode" : "Switch to dark mode";
+}
+
+function applyStoredTheme() {
+  let stored = null;
+  try { stored = localStorage.getItem(THEME_KEY); } catch (e) { /* private mode */ }
+  if (stored === "dark" || stored === "light") {
+    document.documentElement.setAttribute("data-theme", stored);
+  }
+  paintThemeButton();
+}
+
+function toggleTheme() {
+  const next = currentlyDark() ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* not worth failing over */ }
+  paintThemeButton();
+}
+let STATE = { avatars: [], voices: [], knowledge: [], presets: [], meetings: [] };
+let allVoices = [];
+
+function show(el, text, kind) {
+  el.textContent = text;
+  el.className = "msg show " + (kind || "info");
+}
+function hide(el) { el.className = "msg"; }
+
+// Set when a request fails at the connection level, which in practice means the
+// interface's own server is gone -- its window was closed, or the machine slept.
+// Left as a raw "Failed to fetch" this reads like a bug in the upload; it isn't.
+let OFFLINE = false;
+
+function setOffline(off) {
+  if (off === OFFLINE) return;
+  OFFLINE = off;
+  const dot = $("dot");
+  if (off) {
+    dot.className = "dot off";
+    $("workerText").textContent = "interface offline";
+    $("statusLine").textContent =
+      "This page has lost contact with the interface. It is probably no longer running.";
+    for (const id of ["btnStart", "btnStop", "btnGo", "btnBackfill", "btnUploadImage", "btnUploadKb", "btnRefreshVoices"]) {
+      const el = $(id);
+      if (el) el.disabled = true;
+    }
+    show($("sendMsg"),
+      "The interface isn't running any more.\n\n" +
+      "Close this tab and double-click 0-Open-Interface.bat to start it again. " +
+      "Nothing has been lost — meeting transcripts are on disk either way.",
+      "bad");
+  } else {
+    for (const id of ["btnStart", "btnStop", "btnGo", "btnBackfill", "btnUploadImage", "btnUploadKb", "btnRefreshVoices"]) {
+      const el = $(id);
+      if (el) el.disabled = false;
+    }
+    hide($("sendMsg"));
+  }
+}
+
+async function api(path, opts) {
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (e) {
+    setOffline(true);
+    throw new Error(
+      "The interface isn't running. Close this tab and start 0-Open-Interface.bat again."
+    );
+  }
+  setOffline(false);
+  let body = null;
+  try { body = await res.json(); } catch (e) { /* non-JSON error page */ }
+  if (!res.ok) {
+    throw new Error((body && (body.detail || body.message)) || `${res.status} ${res.statusText}`);
+  }
+  return body;
+}
+
+// ---------------------------------------------------------------- rendering
+
+function fillAvatars(selected) {
+  const sel = $("image");
+  const want = selected !== undefined ? selected : sel.value;
+  sel.innerHTML = '<option value="">— first photo in the folder —</option>';
+  for (const a of STATE.avatars) {
+    const o = document.createElement("option");
+    o.value = a.name; o.textContent = a.name;
+    sel.appendChild(o);
+  }
+  sel.value = want || "";
+  updateThumb();
+}
+
+function updateThumb() {
+  const name = $("image").value;
+  const img = $("thumb"), empty = $("thumbEmpty");
+  if (name) {
+    img.src = "/avatars/" + encodeURIComponent(name) + "?t=" + Date.now();
+    img.style.display = ""; empty.style.display = "none";
+  } else {
+    img.style.display = "none"; empty.style.display = "flex";
+  }
+}
+
+function fillVoices(selected) {
+  const sel = $("voice");
+  const want = selected !== undefined ? selected : sel.value;
+  const q = $("voiceFilter").value.trim().toLowerCase();
+  const list = q ? allVoices.filter(v => v.title.toLowerCase().includes(q)) : allVoices;
+  sel.innerHTML = '<option value="">— default voice —</option>';
+  for (const v of list) {
+    const o = document.createElement("option");
+    o.value = v.id; o.textContent = v.title;
+    sel.appendChild(o);
+  }
+  // Keep a selection that the filter has hidden, so filtering can't silently
+  // change which voice is about to be used.
+  if (want && !list.some(v => v.id === want)) {
+    const kept = allVoices.find(v => v.id === want);
+    if (kept) {
+      const o = document.createElement("option");
+      o.value = kept.id; o.textContent = kept.title + "  (selected)";
+      sel.appendChild(o);
+    }
+  }
+  sel.value = want || "";
+  $("voiceHint").textContent = q
+    ? `${list.length} of ${allVoices.length} voices shown`
+    : `${allVoices.length} voices from your Fish Audio account`;
+}
+
+function fillKnowledge(selected) {
+  const sel = $("knowledge");
+  const want = selected !== undefined ? selected : sel.value;
+  sel.innerHTML = '<option value="">— none —</option>';
+  for (const k of STATE.knowledge) {
+    const o = document.createElement("option");
+    o.value = k.id;
+    o.textContent = `${k.id}  (${k.chunks} chunks${k.indexed ? "" : ", not indexed"})`;
+    sel.appendChild(o);
+  }
+  sel.value = want || "";
+  describeKb();
+}
+
+function describeKb() {
+  const k = STATE.knowledge.find(x => x.id === $("knowledge").value);
+  $("kbHint").textContent = k
+    ? `${k.chars.toLocaleString()} characters from: ${k.docs.join(", ") || "(unknown)"}`
+    : "What the avatar knows. Leave empty for none.";
+}
+
+function fillPresets() {
+  const sel = $("preset");
+  const want = sel.value;
+  sel.innerHTML = '<option value="">— nothing loaded —</option>';
+  for (const p of STATE.presets) {
+    const o = document.createElement("option");
+    o.value = p.id; o.textContent = p.label || p.id;
+    sel.appendChild(o);
+  }
+  sel.value = want || "";
+}
+
+function fillMeetings() {
+  const box = $("meetings");
+  if (!STATE.meetings.length) {
+    box.innerHTML = '<p class="empty-note">No meetings yet.</p>';
+    return;
+  }
+  const rows = STATE.meetings.map(m => {
+    const when = new Date(m.at * 1000).toLocaleString();
+    const links = ["pdf", "docx", "md", "jsonl"]
+      .filter(f => f === "jsonl" || m.formats.includes(f))
+      .map(f => `<a href="/notes/${encodeURIComponent(m.stem)}.${f}" target="_blank">${f}</a>`)
+      .join(" · ");
+    return `<tr><td>${when}</td><td>${m.bot_name || "—"}</td><td>${m.turns}</td><td>${links}</td></tr>`;
+  }).join("");
+  box.innerHTML = `<table><thead><tr><th>When</th><th>Attended by</th><th>Turns</th><th>Download</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function fillWorker(w, log) {
+  const dot = $("dot");
+  let text, status;
+  if (!w.running) {
+    dot.className = "dot off";
+    text = "agent off";
+    status = "The agent is not running. Start it before sending the avatar anywhere.";
+  } else if (!w.registered) {
+    dot.className = "dot starting";
+    text = "starting…";
+    status = "Started, waiting for it to register with LiveKit.";
+  } else {
+    dot.className = "dot on";
+    text = "agent ready";
+    const secs = w.started_at ? Math.round(Date.now() / 1000 - w.started_at) : 0;
+    status = `Ready and registered. Running for ${secs < 90 ? secs + "s" : Math.round(secs / 60) + " min"}.`;
+    if (w.pids.length > 2) {
+      status += ` Warning: ${w.pids.length} worker processes found — more than one agent may be competing for meetings.`;
+    }
+  }
+  $("workerText").textContent = text;
+  $("statusLine").textContent = status;
+  $("btnStart").disabled = w.running;
+  $("btnStop").disabled = !w.running;
+  $("btnGo").disabled = !w.running;
+  if (log !== undefined && log !== null) $("log").textContent = log || "nothing yet";
+}
+
+// ---------------------------------------------------------------- loading
+
+async function loadState() {
+  const s = await api("/api/state");
+  STATE = s;
+  allVoices = s.voices || [];
+  fillAvatars();
+  fillVoices();
+  fillKnowledge();
+  fillPresets();
+  fillMeetings();
+  fillWorker(s.worker);
+  if (s.voiceError) $("voiceHint").textContent = "Could not reach Fish Audio: " + s.voiceError;
+  if (s.defaults && s.defaults.botName && !$("botName").value) $("botName").value = s.defaults.botName;
+  if (s.defaults && s.defaults.ownerName && !$("ownerName").value) $("ownerName").value = s.defaults.ownerName;
+  // BRAND_NAME is optional. Without one the strapline stays hidden, and a
+  // missing brand/logo-small.png removes its own <img> rather than showing
+  // a broken-image icon.
+  if (s.defaults && s.defaults.brandName) {
+    $("brandName").textContent = s.defaults.brandName;
+    $("brandName").hidden = false;
+    document.title = s.defaults.brandName + " — Zoom Avatar Generator";
+  }
+  if (s.pendingNotes && s.pendingNotes.length) {
+    show($("pendingMsg"), `${s.pendingNotes.length} meeting${s.pendingNotes.length > 1 ? "s have" : " has"} a transcript but no write-up yet. Use "Write any missing notes" below.`, "info");
+  }
+}
+
+async function pollWorker() {
+  try {
+    const w = await api("/api/worker");
+    fillWorker(w, w.log);
+  } catch (e) {
+    // api() has already flipped the page into its offline state; the poll keeps
+    // running so the page recovers by itself if the interface comes back.
+  }
+}
+
+// ---------------------------------------------------------------- actions
+
+$("preset").addEventListener("change", () => {
+  const p = STATE.presets.find(x => x.id === $("preset").value);
+  if (!p) return;
+  fillAvatars(p.image || "");
+  $("voiceFilter").value = "";
+  fillVoices(p.voiceId || "");
+  fillKnowledge(p.knowledgeId || "");
+  $("persona").value = p.persona || "";
+  $("presetName").value = p.label || "";
+  // Only overwrite the owner if the preset actually names one, so loading an
+  // older preset doesn't silently blank a field that was already right.
+  if (p.ownerName) $("ownerName").value = p.ownerName;
+});
+
+$("image").addEventListener("change", updateThumb);
+$("knowledge").addEventListener("change", describeKb);
+$("voiceFilter").addEventListener("input", () => fillVoices());
+
+$("btnUploadImage").addEventListener("click", () => $("imageFile").click());
+$("imageFile").addEventListener("change", async () => {
+  const f = $("imageFile").files[0];
+  if (!f) return;
+  show($("imageMsg"), "Uploading " + f.name + "…", "info");
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const r = await api("/api/avatars", { method: "POST", body: fd });
+    STATE.avatars = r.avatars;
+    fillAvatars(r.name);
+    show($("imageMsg"), "Added " + r.name + " and selected it.", "ok");
+  } catch (e) {
+    show($("imageMsg"), "Upload failed: " + e.message, "bad");
+  }
+  $("imageFile").value = "";
+});
+
+$("btnUploadKb").addEventListener("click", () => {
+  if (!$("kbName").value.trim()) {
+    show($("kbMsg"), "Give the knowledge base a name first.", "bad");
+    return;
+  }
+  $("kbFiles").click();
+});
+$("kbFiles").addEventListener("change", async () => {
+  const files = Array.from($("kbFiles").files || []);
+  if (!files.length) return;
+  const name = $("kbName").value.trim();
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+  show($("kbMsg"), `Uploading ${files.length} file(s)…`, "info");
+  try {
+    const started = await api("/api/knowledge?name=" + encodeURIComponent(name), { method: "POST", body: fd });
+    await watchJob(started.job);
+  } catch (e) {
+    show($("kbMsg"), "Failed: " + e.message, "bad");
+  }
+  $("kbFiles").value = "";
+});
+
+async function watchJob(jobId) {
+  for (;;) {
+    await new Promise(r => setTimeout(r, 1200));
+    let job;
+    try { job = await api("/api/jobs/" + jobId); }
+    catch (e) { show($("kbMsg"), "Lost track of the job: " + e.message, "bad"); return; }
+
+    if (job.state === "running") {
+      show($("kbMsg"), (job.stage || "Working") + "…", "info");
+      continue;
+    }
+    if (job.state === "error") {
+      show($("kbMsg"), "Failed: " + job.error, "bad");
+      return;
+    }
+    STATE.knowledge = job.knowledge || STATE.knowledge;
+    fillKnowledge(job.id);
+    $("kbName").value = "";
+    let msg = `Built "${job.id}" — ${job.chunks} chunks from ${job.chars.toLocaleString()} characters. Selected it.`;
+    if (job.warning) msg += "\n" + job.warning;
+    show($("kbMsg"), msg, "ok");
+    return;
+  }
+}
+
+$("btnSavePreset").addEventListener("click", async () => {
+  const label = $("presetName").value.trim();
+  if (!label) { show($("sendMsg"), "Type a name to save the preset as.", "bad"); return; }
+  const voice = allVoices.find(v => v.id === $("voice").value);
+  try {
+    const r = await api("/api/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label,
+        image: $("image").value,
+        voiceId: $("voice").value,
+        voiceName: voice ? voice.title : "",
+        knowledgeId: $("knowledge").value,
+        persona: $("persona").value.trim(),
+        ownerName: $("ownerName").value.trim(),
+      }),
+    });
+    STATE.presets = r.presets;
+    fillPresets();
+    $("preset").value = r.saved;
+    show($("sendMsg"), `Saved preset "${label}".`, "ok");
+  } catch (e) {
+    show($("sendMsg"), "Could not save: " + e.message, "bad");
+  }
+});
+
+$("btnDeletePreset").addEventListener("click", async () => {
+  const id = $("preset").value;
+  if (!id) return;
+  const p = STATE.presets.find(x => x.id === id);
+  if (!confirm(`Delete the preset "${(p && p.label) || id}"? The photo and knowledge base are kept.`)) return;
+  try {
+    const r = await api("/api/presets/" + encodeURIComponent(id), { method: "DELETE" });
+    STATE.presets = r.presets;
+    fillPresets();
+    $("preset").value = "";
+    show($("sendMsg"), "Preset deleted.", "ok");
+  } catch (e) {
+    show($("sendMsg"), "Could not delete: " + e.message, "bad");
+  }
+});
+
+$("btnStart").addEventListener("click", async () => {
+  $("btnStart").disabled = true;
+  show($("sendMsg"), "Starting the agent…", "info");
+  try {
+    const w = await api("/api/worker/start", { method: "POST" });
+    fillWorker(w);
+    hide($("sendMsg"));
+    $("logBox").open = true;
+  } catch (e) {
+    show($("sendMsg"), "Could not start: " + e.message, "bad");
+  }
+});
+
+$("btnStop").addEventListener("click", async () => {
+  $("btnStop").disabled = true;
+  // The graceful stop waits for the agent to summarize, render and email, which
+  // takes a few seconds. Say so, or it looks hung.
+  show($("sendMsg"), "Asking the avatar to leave the meeting and write its notes. This can take up to a minute…", "info");
+  try {
+    const r = await api("/api/worker/stop", { method: "POST" });
+    fillWorker(r);
+    if (r.meetings) { STATE.meetings = r.meetings; fillMeetings(); }
+    const n = (r.backfilled || []).length;
+    let msg;
+    if (!r.wasInMeeting) {
+      msg = "Agent stopped.";
+    } else if (r.forced) {
+      msg = "Stopped, but the agent had to be forced, so it may linger in the meeting for a moment.";
+    } else {
+      msg = "The avatar left the meeting and wrote its notes.";
+    }
+    if (n) msg += ` Filled in notes for ${n} meeting${n > 1 ? "s" : ""} from the transcript.`;
+    show($("sendMsg"), msg, "ok");
+    refreshPending();
+  } catch (e) {
+    show($("sendMsg"), "Could not stop: " + e.message, "bad");
+  }
+  $("btnStop").disabled = false;
+});
+
+async function refreshPending() {
+  try {
+    const r = await api("/api/notes/pending");
+    const box = $("pendingMsg");
+    if (r.pending && r.pending.length) {
+      show(box, `${r.pending.length} meeting${r.pending.length > 1 ? "s have" : " has"} a transcript but no write-up yet. Use "Write any missing notes" below.`, "info");
+    } else {
+      hide(box);
+    }
+  } catch (e) { /* not worth a banner */ }
+}
+
+$("btnBackfill").addEventListener("click", async () => {
+  const btn = $("btnBackfill");
+  btn.disabled = true;
+  show($("pendingMsg"), "Writing notes — summarizing, rendering the PDF and emailing…", "info");
+  try {
+    const r = await api("/api/notes/reconcile", { method: "POST" });
+    STATE.meetings = r.meetings || STATE.meetings;
+    fillMeetings();
+    const done = (r.backfilled || []).filter(x => x.ok).length;
+    const failed = (r.backfilled || []).filter(x => !x.ok);
+    if (!r.backfilled.length) show($("pendingMsg"), "Nothing was missing.", "ok");
+    else if (failed.length) show($("pendingMsg"), `Wrote ${done}. Failed: ` + failed.map(f => f.stem + " (" + (f.error || "unknown") + ")").join("; "), "bad");
+    else show($("pendingMsg"), `Wrote notes for ${done} meeting${done > 1 ? "s" : ""} and emailed them.`, "ok");
+  } catch (e) {
+    show($("pendingMsg"), "Failed: " + e.message, "bad");
+  }
+  btn.disabled = false;
+  refreshPending();
+});
+
+$("btnRefreshVoices").addEventListener("click", async () => {
+  const btn = $("btnRefreshVoices");
+  btn.disabled = true;
+  const keep = $("voice").value;
+  try {
+    const r = await api("/api/voices/refresh");
+    allVoices = r.voices || [];
+    fillVoices(keep);
+    if (r.voiceError) $("voiceHint").textContent = "Could not reach Fish Audio: " + r.voiceError;
+  } catch (e) {
+    $("voiceHint").textContent = "Refresh failed: " + e.message;
+  }
+  btn.disabled = false;
+});
+
+$("btnGo").addEventListener("click", async () => {
+  const url = $("meetingUrl").value.trim();
+  if (!url) { show($("sendMsg"), "Paste the meeting link first.", "bad"); return; }
+  $("btnGo").disabled = true;
+  show($("sendMsg"), "Sending…", "info");
+  const payload = {
+    meetingUrl: url,
+    botName: $("botName").value.trim(),
+    image: $("image").value,
+    voiceId: $("voice").value,
+    knowledgeId: $("knowledge").value,
+    persona: $("persona").value.trim(),
+    ownerName: $("ownerName").value.trim(),
+    requireAddress: $("requireAddress").checked,
+    noAnnounce: !$("announce").checked,
+  };
+  try {
+    const r = await api("/api/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    show($("sendMsg"), "Sent. Watch the meeting — it takes a few seconds to appear.\n\n" + r.message, "ok");
+    $("logBox").open = true;
+  } catch (e) {
+    let m = e.message;
+    if (/already sent/i.test(m)) {
+      m += "\n\nIf you meant to send a second one, tick nothing — just wait two minutes, or use the command line with --force.";
+    }
+    show($("sendMsg"), m, "bad");
+  }
+  $("btnGo").disabled = false;
+});
+
+// ---------------------------------------------------------------- voices
+
+const MAX_SAMPLE_MS = 30000;   // Fish Audio's useful ceiling for a fast clone
+const MIN_SAMPLE_MS = 3000;
+const GOOD_SAMPLE_MS = 10000;
+
+let voiceMode = "upload";
+let audioBuffer = null;         // decoded sample, for trimming
+let designToken = null;
+let designChoice = null;
+let recorder = null;
+let recStream = null;
+let recTimer = null;
+let recStart = 0;
+let trimPlayback = null;
+
+function audioCtx() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  return new Ctx();
+}
+
+function fmt(sec) { return sec.toFixed(1) + "s"; }
+
+function trimRange() {
+  if (!audioBuffer) return [0, 0];
+  const dur = audioBuffer.duration;
+  const a = ($("trimStart").value / 1000) * dur;
+  const b = ($("trimEnd").value / 1000) * dur;
+  return a <= b ? [a, b] : [b, a];
+}
+
+function drawWave() {
+  const canvas = $("wave");
+  if (!canvas || !audioBuffer) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 480;
+  const h = 72;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const data = audioBuffer.getChannelData(0);
+  const step = Math.max(1, Math.floor(data.length / w));
+  const mid = h / 2;
+  const range = trimRange();
+  const a = range[0], b = range[1];
+  const dur = audioBuffer.duration;
+
+  // Selected span highlighted, the rest dimmed, so the trim is obvious.
+  ctx.fillStyle = "rgba(19,164,224,.14)";
+  ctx.fillRect((a / dur) * w, 0, ((b - a) / dur) * w, h);
+
+  for (let x = 0; x < w; x++) {
+    let peak = 0;
+    for (let i = 0; i < step; i++) {
+      const v = Math.abs(data[x * step + i] || 0);
+      if (v > peak) peak = v;
+    }
+    const sec = (x / w) * dur;
+    const inSel = sec >= a && sec <= b;
+    ctx.fillStyle = inSel ? "#13A4E0" : "rgba(140,150,165,.45)";
+    const bar = Math.max(1, peak * (h - 8));
+    ctx.fillRect(x, mid - bar / 2, 1, bar);
+  }
+}
+
+function updateTrimLabels() {
+  if (!audioBuffer) return;
+  const range = trimRange();
+  const a = range[0], b = range[1];
+  const len = b - a;
+  $("trimStartLabel").textContent = fmt(a);
+  $("trimEndLabel").textContent = fmt(b);
+  let note = "Selected " + fmt(len) + " of " + fmt(audioBuffer.duration) + ".";
+  if (len < MIN_SAMPLE_MS / 1000) note += " Too short - needs at least 3 seconds.";
+  else if (len < GOOD_SAMPLE_MS / 1000) note += " Longer than 10 seconds clones better.";
+  else if (len > MAX_SAMPLE_MS / 1000) note += " Trim it to 30 seconds or less.";
+  $("trimHint").textContent = note;
+  drawWave();
+}
+
+async function loadSample(blob) {
+  show($("makerMsg"), "Reading the audio...", "info");
+  try {
+    const ctx = audioCtx();
+    audioBuffer = await ctx.decodeAudioData(await blob.arrayBuffer());
+    ctx.close();
+  } catch (e) {
+    audioBuffer = null;
+    $("trimBox").style.display = "none";
+    show($("makerMsg"),
+      "That file could not be read as audio. Try a wav, mp3, m4a or webm file.", "bad");
+    return;
+  }
+  $("trimBox").style.display = "";
+  $("trimStart").value = 0;
+  // Pre-trim to the maximum so an over-long file starts in a valid state
+  // rather than showing an error the user has to fix by hand.
+  const cap = Math.min(1, (MAX_SAMPLE_MS / 1000) / audioBuffer.duration);
+  $("trimEnd").value = Math.round(cap * 1000);
+  updateTrimLabels();
+  hide($("makerMsg"));
+}
+
+// The trimmed selection as a 16-bit PCM WAV blob. WAV is a 44-byte header plus
+// raw samples, so no library is needed and nothing is re-encoded.
+function trimmedWav() {
+  const range = trimRange();
+  const a = range[0], b = range[1];
+  const rate = audioBuffer.sampleRate;
+  const channels = audioBuffer.numberOfChannels;
+  const first = Math.max(0, Math.floor(a * rate));
+  const last = Math.min(audioBuffer.length, Math.ceil(b * rate));
+  const frames = Math.max(0, last - first);
+
+  const bytes = 44 + frames * channels * 2;
+  const buf = new ArrayBuffer(bytes);
+  const view = new DataView(buf);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+
+  str(0, "RIFF");
+  view.setUint32(4, bytes - 8, true);
+  str(8, "WAVE");
+  str(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);              // PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  str(36, "data");
+  view.setUint32(40, frames * channels * 2, true);
+
+  let off = 44;
+  const chans = [];
+  for (let c = 0; c < channels; c++) chans.push(audioBuffer.getChannelData(c));
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < channels; c++) {
+      const s = Math.max(-1, Math.min(1, chans[c][first + i] || 0));
+      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      off += 2;
+    }
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+function setVoiceMode(mode) {
+  voiceMode = mode;
+  const tabs = document.querySelectorAll(".tab");
+  for (const tab of tabs) tab.classList.toggle("active", tab.dataset.mode === mode);
+  $("modeUpload").style.display = mode === "upload" ? "" : "none";
+  $("modeRecord").style.display = mode === "record" ? "" : "none";
+  $("modeDescribe").style.display = mode === "describe" ? "" : "none";
+  // Trimming applies to a real sample, not to designed candidates.
+  $("trimBox").style.display = (mode !== "describe" && audioBuffer) ? "" : "none";
+  hide($("makerMsg"));
+}
+
+function stopRecording() {
+  if (recTimer) { clearInterval(recTimer); recTimer = null; }
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+  if (recStream) { recStream.getTracks().forEach(tr => tr.stop()); recStream = null; }
+  $("btnRecord").textContent = "Start recording";
+  $("btnRecord").disabled = false;
+}
+
+// Microphone problems are the most likely reason recording "does nothing", so
+// they are named precisely and reported next to the button rather than in the
+// panel's shared message box further down the page.
+function micProblem(err) {
+  const name = (err && err.name) || "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Your browser blocked microphone access.\n\n" +
+      "Click the icon at the left of the address bar (the tune/lock icon), set " +
+      "Microphone to Allow, then reload this page and try again.";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "No microphone was found. Plug one in, or check Windows sound settings " +
+      "to make sure an input device is enabled.";
+  }
+  if (name === "NotReadableError" || name === "AbortError") {
+    return "The microphone is there but could not be opened — usually another app " +
+      "has it. Close Zoom, Teams or anything else using the mic, then try again.";
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return "This browser will not allow microphone access on this page. Use the " +
+      "Upload audio tab instead, or record with Voice Recorder and upload the file.";
+  }
+  return "Could not use the microphone: " + ((err && err.message) || name || "unknown reason");
+}
+
+async function startRecording() {
+  if (recorder && recorder.state === "recording") { stopRecording(); return; }
+
+  // Say something immediately. Waiting on a permission prompt with no feedback
+  // is exactly what looks like a dead button.
+  show($("recMsg"), "Asking for microphone access…", "info");
+  $("btnRecord").disabled = true;
+
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("no getUserMedia");
+    }
+    recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    show($("recMsg"), micProblem(e), "bad");
+    $("recMsg").scrollIntoView({ block: "nearest" });
+    $("btnRecord").disabled = false;
+    return;
+  }
+  $("btnRecord").disabled = false;
+
+  const chunks = [];
+  try {
+    recorder = new MediaRecorder(recStream);
+  } catch (e) {
+    show($("recMsg"), "This browser could not start a recorder: " + e.message, "bad");
+    stopRecording();
+    return;
+  }
+  recorder.ondataavailable = (ev) => { if (ev.data.size) chunks.push(ev.data); };
+  recorder.onerror = (ev) => {
+    show($("recMsg"), "Recording failed: " + ((ev.error && ev.error.name) || "unknown"), "bad");
+    stopRecording();
+  };
+  recorder.onstop = async () => {
+    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    const ms = Date.now() - recStart;
+    $("recBar").style.width = "0%";
+    if (ms < MIN_SAMPLE_MS) {
+      show($("recMsg"), "That was under 3 seconds — record a bit more.", "bad");
+      return;
+    }
+    // The length is stated by the trim hint from the decoded audio. Quoting the
+    // wall-clock time here as well just invites the two numbers to disagree.
+    show($("recMsg"), "Recorded. Trim it below if you like, then Create voice.", "ok");
+    await loadSample(blob);
+  };
+
+  recorder.start();
+  recStart = Date.now();
+  $("btnRecord").textContent = "Stop recording";
+  show($("recMsg"), "Recording — speak normally. It stops itself at 30 seconds.", "info");
+  recTimer = setInterval(() => {
+    const ms = Date.now() - recStart;
+    const pct = Math.min(100, (ms / MAX_SAMPLE_MS) * 100);
+    $("recBar").style.width = pct + "%";
+    $("recTimer").textContent = (ms / 1000).toFixed(1) + "s / 30s";
+    $("recTimer").classList.toggle("hot", ms > MAX_SAMPLE_MS - 5000);
+    // Hard stop at the limit, so an over-long sample cannot be produced at all.
+    if (ms >= MAX_SAMPLE_MS) stopRecording();
+  }, 100);
+}
+
+async function watchVoiceJob(jobId, msgEl) {
+  for (;;) {
+    await new Promise(r => setTimeout(r, 1500));
+    let job;
+    try { job = await api("/api/jobs/" + jobId); }
+    catch (e) { show(msgEl, "Lost track of the job: " + e.message, "bad"); return null; }
+    if (job.state === "running") { show(msgEl, (job.stage || "Working") + "...", "info"); continue; }
+    if (job.state === "error") { show(msgEl, "Failed: " + job.error, "bad"); return null; }
+    return job;
+  }
+}
+
+function afterVoiceCreated(job, msgEl) {
+  allVoices = job.voices || allVoices;
+  $("voiceFilter").value = "";
+  fillVoices(job.voice.id);
+  const pending = job.voice.state !== "trained";
+  show(msgEl,
+    'Created "' + job.voice.title + '" and selected it.' +
+    (pending
+      ? " Fish Audio is still training it - give it a minute before using it."
+      : " It is ready, and it is now in your Fish Audio account for any app to use."),
+    pending ? "info" : "ok");
+  $("voiceMaker").style.display = "none";
+  audioBuffer = null;
+  designToken = null;
+  designChoice = null;
+}
+
+$("btnNewVoice").addEventListener("click", () => {
+  const open = $("voiceMaker").style.display !== "none";
+  $("voiceMaker").style.display = open ? "none" : "";
+  if (!open) setVoiceMode("upload");
+});
+$("btnCancelVoice").addEventListener("click", () => {
+  stopRecording();
+  $("voiceMaker").style.display = "none";
+  audioBuffer = null;
+});
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.addEventListener("click", () => setVoiceMode(tab.dataset.mode));
+}
+
+$("btnPickAudio").addEventListener("click", () => $("voiceFile").click());
+$("voiceFile").addEventListener("change", async () => {
+  const f = $("voiceFile").files[0];
+  if (!f) return;
+  if (!$("newVoiceName").value.trim()) {
+    $("newVoiceName").value = f.name.replace(/\.[^.]+$/, "").slice(0, 40);
+  }
+  await loadSample(f);
+  $("voiceFile").value = "";
+});
+
+$("btnRecord").addEventListener("click", startRecording);
+for (const id of ["trimStart", "trimEnd"]) {
+  $(id).addEventListener("input", updateTrimLabels);
+}
+$("btnResetTrim").addEventListener("click", () => {
+  if (!audioBuffer) return;
+  $("trimStart").value = 0;
+  $("trimEnd").value = Math.round(Math.min(1, (MAX_SAMPLE_MS / 1000) / audioBuffer.duration) * 1000);
+  updateTrimLabels();
+});
+$("btnPlayTrim").addEventListener("click", () => {
+  if (!audioBuffer) return;
+  if (trimPlayback) { try { trimPlayback.stop(); } catch (e) { /* already ended */ } trimPlayback = null; }
+  const range = trimRange();
+  const a = range[0], b = range[1];
+  const ctx = audioCtx();
+  const src = ctx.createBufferSource();
+  src.buffer = audioBuffer;
+  src.connect(ctx.destination);
+  src.start(0, a, Math.max(0.05, b - a));
+  trimPlayback = src;
+  src.onended = () => ctx.close();
+});
+
+$("btnDesign").addEventListener("click", async () => {
+  const instruction = $("voiceDesc").value.trim();
+  if (!instruction) { show($("makerMsg"), "Describe the voice first.", "bad"); return; }
+  $("btnDesign").disabled = true;
+  $("candidates").innerHTML = "";
+  show($("makerMsg"), "Generating voices - this takes a few seconds...", "info");
+  try {
+    const r = await api("/api/voices/design", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: instruction,
+        referenceText: $("voiceSampleLine").value.trim(),
+        language: "en",
+        n: 2,
+      }),
+    });
+    designToken = r.token;
+    designChoice = 0;
+    let html = "";
+    for (let i = 0; i < r.count; i++) {
+      html += '<div class="candidate">' +
+        '<label style="margin:0;font-weight:600">' +
+        '<input type="radio" name="cand" value="' + i + '"' + (i === 0 ? " checked" : "") + '> ' +
+        (i + 1) + "</label>" +
+        '<audio controls preload="none" src="/api/voices/design/' + r.token + "/" + i + '.wav"></audio>' +
+        "</div>";
+    }
+    $("candidates").innerHTML = html;
+    for (const radio of $("candidates").querySelectorAll("input[name=cand]")) {
+      radio.addEventListener("change", () => { designChoice = Number(radio.value); });
+    }
+    show($("makerMsg"), "Listen to both, pick one, then Create voice.", "ok");
+  } catch (e) {
+    show($("makerMsg"), "Failed: " + e.message, "bad");
+  }
+  $("btnDesign").disabled = false;
+});
+
+$("btnCreateVoice").addEventListener("click", async () => {
+  const name = $("newVoiceName").value.trim();
+  if (!name) { show($("makerMsg"), "Give the voice a name first.", "bad"); return; }
+  const btn = $("btnCreateVoice");
+  btn.disabled = true;
+
+  try {
+    let started;
+    if (voiceMode === "describe") {
+      if (designToken === null) {
+        show($("makerMsg"), "Generate some voices first, then pick one.", "bad");
+        btn.disabled = false;
+        return;
+      }
+      started = await api("/api/voices/design/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: designToken, index: designChoice || 0, name: name }),
+      });
+    } else {
+      if (!audioBuffer) {
+        show($("makerMsg"),
+          voiceMode === "record" ? "Record something first." : "Choose an audio file first.",
+          "bad");
+        btn.disabled = false;
+        return;
+      }
+      const range = trimRange();
+      if (range[1] - range[0] < MIN_SAMPLE_MS / 1000) {
+        show($("makerMsg"), "The selection is under 3 seconds. Widen it.", "bad");
+        btn.disabled = false;
+        return;
+      }
+      show($("makerMsg"), "Preparing the sample...", "info");
+      const fd = new FormData();
+      fd.append("file", trimmedWav(), "sample.wav");
+      started = await api("/api/voices/clone?name=" + encodeURIComponent(name), {
+        method: "POST",
+        body: fd,
+      });
+    }
+    const job = await watchVoiceJob(started.job, $("makerMsg"));
+    if (job) afterVoiceCreated(job, $("makerMsg"));
+  } catch (e) {
+    show($("makerMsg"), "Failed: " + e.message, "bad");
+  }
+  btn.disabled = false;
+});
+
+$("btnPreviewVoice").addEventListener("click", async () => {
+  const id = $("voice").value;
+  if (!id) { show($("voiceMsg"), "Pick a voice first.", "bad"); return; }
+  const btn = $("btnPreviewVoice");
+  btn.disabled = true;
+  show($("voiceMsg"), "Generating a sample...", "info");
+  try {
+    // Not through api(): the response is audio, not JSON.
+    const res = await fetch("/api/voices/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voiceId: id }),
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { detail = (await res.json()).detail || detail; } catch (e) { /* not JSON */ }
+      throw new Error(detail);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const el = $("voiceAudio");
+    el.src = url;
+    el.style.display = "";
+    el.play().catch(() => { /* autoplay may be blocked; controls are visible */ });
+    hide($("voiceMsg"));
+  } catch (e) {
+    show($("voiceMsg"), "Could not generate a sample: " + e.message, "bad");
+  }
+  btn.disabled = false;
+});
+
+window.addEventListener("resize", () => { if (audioBuffer) drawWave(); });
+
+applyStoredTheme();
+$("btnTheme").addEventListener("click", toggleTheme);
+// Follow the OS while no explicit choice is stored.
+if (window.matchMedia) {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintThemeButton);
+}
+
+loadState().catch(e => show($("sendMsg"), "Could not load: " + e.message, "bad"));
+setInterval(pollWorker, 3000);
+setInterval(() => {
+  api("/api/meetings").then(r => { STATE.meetings = r.meetings; fillMeetings(); }).catch(() => {});
+}, 20000);
+</script>
+</body>
+</html>
