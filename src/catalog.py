@@ -294,6 +294,9 @@ def tail_worker_log(lines: int = 120) -> str:
     return "\n".join(text.splitlines()[-lines:])
 
 
+PREV_WORKER_LOG = LOG_DIR / "worker.prev.log"
+
+
 def start_worker() -> dict:
     """Start the worker, logging to logs/worker.log.
 
@@ -308,7 +311,14 @@ def start_worker() -> dict:
     # Clear any leftover stop request, or the new worker would wind up the
     # moment it picks up a job.
     STOP_REQUEST.unlink(missing_ok=True)
-    # Truncate per start so the log shown in the UI is this run, not history.
+    # The UI shows this run rather than all history, but the previous run is
+    # kept alongside it: the instinctive reaction to "the avatar never joined"
+    # is to restart the worker, and truncating here would erase the reason.
+    if WORKER_LOG.exists() and WORKER_LOG.stat().st_size:
+        try:
+            WORKER_LOG.replace(PREV_WORKER_LOG)
+        except OSError:
+            pass  # keeping the old log is a nicety, never a reason not to start
     log = WORKER_LOG.open("w", encoding="utf-8", errors="replace")
     # No console window. That does mean the worker cannot be asked to shut down
     # cleanly (see stop_worker), so the notes are guaranteed by reconcile_notes()
@@ -334,6 +344,26 @@ def start_worker() -> dict:
     return {"started": True, **worker_status()}
 
 
+def _meeting_in_progress(log_tail: str) -> bool:
+    """True only when a meeting has started and not yet ended.
+
+    The earlier test asked whether the log tail *mentioned* a meeting at all,
+    which stayed true for as long as that line sat inside the window. A meeting
+    that finished ten minutes ago therefore still counted, so every stop waited
+    out the full grace period while nothing was polling the request file -- the
+    button looked broken for 75 seconds and then worked.
+
+    Compares the newest start marker against the newest end marker instead.
+    "Meeting over" is logged unconditionally at the top of the recap shutdown
+    callback, which makes it the reliable end marker; "Left the meeting." is
+    skipped whenever leaving raises.
+    """
+    start = log_tail.rfind("Taking notes to")
+    if start < 0:
+        return False
+    return start > log_tail.rfind("Meeting over; writing recap")
+
+
 def stop_worker(grace_seconds: int = 75) -> dict:
     """Stop the agent: take the avatar out of the meeting, let it write its
     notes, then end the process.
@@ -355,39 +385,57 @@ def stop_worker(grace_seconds: int = 75) -> dict:
     procs = _worker_procs()
     if not procs:
         STOP_REQUEST.unlink(missing_ok=True)
-        return {"stopped": 0, "forced": False, "asked": False, **worker_status()}
+        return {
+            "stopped": 0, "forced": False, "asked": False,
+            "wasInMeeting": False, **worker_status(),
+        }
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     STOP_REQUEST.write_text("stop", encoding="utf-8")
 
     # Only a worker that is actually in a meeting has the watcher polling that
     # file, so an idle one is stopped straight away rather than waited on.
-    in_meeting = "Taking notes to" in tail_worker_log(600)
-    wait = grace_seconds if in_meeting else 0
+    in_meeting = _meeting_in_progress(tail_worker_log(600))
+    wound_up = not in_meeting
 
-    gone, alive = psutil.wait_procs(procs, timeout=wait) if wait else ([], procs)
-    for proc in alive:
-        logger.info("Worker %s still up after the wind-up window; stopping it.", proc.pid)
+    if in_meeting:
+        # Wait for the MEETING to finish, not for the process to exit. The
+        # worker is long-running: it hands the job back and waits for the next
+        # one, so it never exits by itself. Waiting on the process therefore
+        # burned the entire grace period every time and then reported "forced"
+        # -- while the log showed the avatar had left, the recap was written and
+        # the email was sent, all within about six seconds.
+        deadline = time.monotonic() + grace_seconds
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            if not _meeting_in_progress(tail_worker_log(600)):
+                wound_up = True
+                break
+
+    for proc in procs:
         try:
             proc.terminate()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-    gone2, alive2 = psutil.wait_procs(alive, timeout=8)
-    for proc in alive2:
+    gone, alive = psutil.wait_procs(procs, timeout=8)
+    for proc in alive:
+        logger.info("Worker %s ignored terminate; killing it.", proc.pid)
         try:
             proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-    psutil.wait_procs(alive2, timeout=5)
+    psutil.wait_procs(alive, timeout=5)
 
     STOP_REQUEST.unlink(missing_ok=True)
     return {
-        "stopped": len(gone) + len(alive),
+        "stopped": len(procs),
         # True only when it was in a meeting and still did not wind up on its
         # own; the notes then come from reconcile_notes() rather than the agent.
         # An idle worker is always "forced" and that is unremarkable, so it is
         # reported as False.
-        "forced": bool(alive) and in_meeting,
+        # Only "forced" if the meeting never actually wound up. Terminating a
+        # worker that has finished its job is ordinary, not a failure.
+        "forced": in_meeting and not wound_up,
         "asked": True,
         "wasInMeeting": in_meeting,
         **worker_status(),

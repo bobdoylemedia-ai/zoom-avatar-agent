@@ -28,6 +28,7 @@ import base64
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -39,7 +40,7 @@ logger = logging.getLogger("zoom-avatar.voices")
 API = "https://api.fish.audio"
 
 # Shared with the browser avatar app so both can tell which voices they made.
-APP_VOICE_TAG = "bdm-avatar-app"
+APP_VOICE_TAG = "zoom-avatar-agent"
 
 # Matches the browser app's limits, which were tuned against Fish's behaviour.
 MIN_AUDIO_BYTES = 2 * 1024
@@ -51,7 +52,13 @@ TRAIN_POLL_SECONDS = 2
 TRAIN_TIMEOUT_SECONDS = 90
 
 DESIGN_MODEL = "voice-design-1"
-TTS_MODEL = "s2-pro"
+# MUST match the model the agent speaks with, which is the fishaudio
+# plugin's DEFAULT_MODEL ("s2.1-pro"). They were allowed to drift once:
+# preview ran on s2-pro, which does not act on the bracketed delivery
+# direction, so auditioning a tone here sounded flat while the very same
+# tone in a meeting sounded right -- and the preview was therefore lying
+# about what the call would sound like.
+TTS_MODEL = "s2.1-pro"
 
 # Designed candidates awaiting a decision: token -> {"at", "candidates": [wav bytes]}
 _designs: dict[str, dict] = {}
@@ -287,7 +294,8 @@ def save_candidate(token: str, index: int, title: str, on_progress=None) -> dict
 # --------------------------------------------------------------------------- #
 
 
-def preview(voice_id: str, text: str = "") -> bytes:
+def preview(voice_id: str, text: str = "", tone_tag: str = "",
+            temperature: float = 0.7) -> bytes:
     """Synthesize a short line in an existing voice. Returns mp3 bytes."""
     voice_id = (voice_id or "").strip()
     if not voice_id:
@@ -296,12 +304,24 @@ def preview(voice_id: str, text: str = "") -> bytes:
         "Hi, this is how I'll sound in your meetings. I can take notes and pass "
         "messages along."
     )
+    # One direction in front of the whole line only steers the opening
+    # sentence, which is why auditioning here sounded flat while a meeting did
+    # not. The agent repeats it per sentence (TonedSentenceTokenizer, which
+    # tokenizes with blingfire); a fixed preview line only needs the simple
+    # split, but the two must stay in step or this stops predicting the call.
+    tag = (tone_tag or "").strip()
+    line = line[:300]
+    if tag:
+        line = " ".join(
+            f"{tag} {part}" for part in re.split(r"(?<=[.!?])\s+", line) if part
+        )
     payload = {
-        "text": line[:300],
+        "text": line,
         "reference_id": voice_id,
         "format": "mp3",
         "mp3_bitrate": 128,
         "latency": "normal",
+        "temperature": temperature,
     }
     return _request(
         "POST",

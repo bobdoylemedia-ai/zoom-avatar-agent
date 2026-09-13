@@ -17,11 +17,15 @@ import os
 import pathlib
 import re
 import secrets
+import socket
+import shutil
+import subprocess
 import sys
 import threading
 import time
 import webbrowser
 
+import psutil
 from dotenv import load_dotenv
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -38,7 +42,12 @@ import voices as voices_mod  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("zoom-avatar.webui")
 
-HOST = "127.0.0.1"
+# Loopback by default, deliberately: this page can start processes and send an
+# avatar into a meeting, so anything that can reach it can do those things. Set
+# ALLOW_LAN=1 in .env.local to also answer on the local network -- useful for
+# driving it from a phone, and still not reachable from outside the router.
+ALLOW_LAN = os.getenv("ALLOW_LAN", "").strip().lower() in {"1", "true", "yes", "on"}
+HOST = "0.0.0.0" if ALLOW_LAN else "127.0.0.1"  # noqa: S104 - opt-in, see above
 PORT = 8765
 PAGE = pathlib.Path(__file__).with_name("webui.html")
 BRAND_DIR = _ROOT / "brand"
@@ -82,6 +91,8 @@ async def index() -> HTMLResponse:
 
 @app.get("/api/state")
 async def state() -> JSONResponse:
+    import agent as agent_mod
+
     voices, voice_error = await asyncio.to_thread(catalog.list_voices)
     return JSONResponse({
         "avatars": catalog.list_avatars(),
@@ -89,19 +100,22 @@ async def state() -> JSONResponse:
         "voiceError": voice_error,
         "knowledge": catalog.list_knowledge(),
         "presets": catalog.list_presets(),
-        "meetings": catalog.list_meetings(10),
+        "tones": [{"id": k, "label": v["label"]} for k, v in agent_mod.TONES.items()],
+        # Match the background refresh, or the list jumps from 10 to 25
+        # twenty seconds after the page loads.
+        "meetings": catalog.list_meetings(25),
         "worker": catalog.worker_status(),
         "pendingNotes": [p.stem for p in catalog.transcripts_without_notes()],
         "defaults": {
-            # The bot's display name follows the owner's, so a fresh install
-            # reads "Jane Smith (AI)" rather than someone else's name. BOT_NAME
-            # overrides it outright.
+            # Follows the owner's name, so a fresh install reads "Jane Smith (AI)"
+            # rather than somebody else's. BOT_NAME overrides it outright.
             "botName": _default_bot_name(),
+            # Optional: your own name in the interface header.
+            "brandName": os.getenv("BRAND_NAME", "").strip(),
             # Falls back to OWNER_NAME so the field is pre-filled rather than
             # left blank for the agent to guess at.
             "ownerName": os.getenv("OWNER_NAME", "").strip(),
-            # Optional. Set BRAND_NAME to put your own name in the header.
-            "brandName": os.getenv("BRAND_NAME", "").strip(),
+            "tone": agent_mod.DEFAULT_TONE,
         },
     })
 
@@ -110,6 +124,31 @@ async def state() -> JSONResponse:
 async def voices_refresh() -> JSONResponse:
     voices, err = await asyncio.to_thread(catalog.list_voices, True)
     return JSONResponse({"voices": voices, "voiceError": err})
+
+
+@app.get("/rootCA.crt")
+async def root_ca() -> FileResponse:
+    """Hand the phone the CA that signed this site's certificate.
+
+    Only the public certificate is ever served -- rootCA-key.pem sits next to it
+    and must never leave the machine. Off unless ALLOW_LAN is set, because on
+    loopback there is nothing to install it for.
+    """
+    if not ALLOW_LAN:
+        raise HTTPException(404, "not found")
+    root = _root_ca()
+    if root is None:
+        raise HTTPException(404, "no local certificate authority was found")
+    # Served inline, deliberately. With Content-Disposition: attachment, iOS
+    # Safari files it away in Downloads and nothing ever appears under Device
+    # Management; served inline with this content type, Safari offers to install
+    # it as a profile. FileResponse always sets a disposition, hence Response.
+    from fastapi.responses import Response
+
+    return Response(
+        content=root.read_bytes(),
+        media_type="application/x-x509-ca-cert",
+    )
 
 
 @app.get("/brand/{name}")
@@ -165,6 +204,39 @@ async def notes_pending() -> JSONResponse:
     return JSONResponse({
         "pending": [p.stem for p in catalog.transcripts_without_notes()]
     })
+
+
+@app.post("/api/whisper")
+async def whisper(payload: dict) -> JSONResponse:
+    """Send a line into a meeting that is already running.
+
+    Appended to a queue the worker drains twice a second while it is in a
+    meeting. Appending rather than overwriting, so two sent in quick succession
+    both arrive.
+    """
+    mode = str(payload.get("mode") or "tell")
+    if mode not in ("say", "tell", "dismiss"):
+        mode = "tell"
+    text = str(payload.get("text") or "").strip()
+    # "dismiss" is a control, not a message, so it carries no text.
+    if mode != "dismiss":
+        if not text:
+            raise HTTPException(400, "type something to send first")
+        if len(text) > 1000:
+            raise HTTPException(400, "that is too long to send mid-meeting")
+
+    worker = catalog.worker_status()
+    if not worker["running"]:
+        raise HTTPException(409, "The agent isn't running, so there's nothing to send to.")
+    if not catalog._meeting_in_progress(catalog.tail_worker_log(600)):
+        raise HTTPException(409, "The avatar isn't in a meeting right now.")
+
+    line = json.dumps({"text": text, "mode": mode}, ensure_ascii=False)
+    path = _ROOT / "logs" / "whisper.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+    return JSONResponse({"sent": True, "mode": mode})
 
 
 @app.post("/api/notes/reconcile")
@@ -422,11 +494,16 @@ async def voices_design_save(payload: dict) -> JSONResponse:
 async def voices_preview(payload: dict):
     from fastapi.responses import Response
 
+    import agent as agent_mod
+
+    _, tone = agent_mod.resolve_tone(payload.get("tone"))
     try:
         mp3 = await asyncio.to_thread(
             voices_mod.preview,
             str(payload.get("voiceId") or ""),
             str(payload.get("text") or ""),
+            tone["tag"],
+            tone["temperature"],
         )
     except voices_mod.VoiceError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -455,6 +532,7 @@ async def preset_save(payload: dict) -> JSONResponse:
         "knowledgeId": payload.get("knowledgeId") or "",
         "agentPrompt": payload.get("agentPrompt") or "",
         "agentIdlePrompt": payload.get("agentIdlePrompt") or "",
+        "tone": payload.get("tone") or "",
     }
     try:
         presets = catalog.save_preset(preset)
@@ -484,8 +562,19 @@ async def send(payload: dict) -> JSONResponse:
         raise HTTPException(400, "that doesn't look like a meeting link")
 
     # A dry run sends nothing, so don't make it depend on the agent being up.
-    if not payload.get("dryRun") and not catalog.worker_status()["running"]:
-        raise HTTPException(409, "The agent isn't running. Start it first.")
+    if not payload.get("dryRun"):
+        worker = catalog.worker_status()
+        if not worker["running"]:
+            raise HTTPException(409, "The agent isn't running. Start it first.")
+        # Registration lags the process by a second or two. Dispatching inside
+        # that gap targets an agent name LiveKit has no worker for, so the job
+        # is never delivered: no avatar appears and nothing is logged.
+        if not worker["registered"]:
+            raise HTTPException(
+                409,
+                "The agent is still starting up. Wait for the dot to turn green, "
+                "then send again.",
+            )
 
     argv = [url, "--bot-name", str(payload.get("botName") or "AI Assistant")]
     for flag, key in (
@@ -495,6 +584,7 @@ async def send(payload: dict) -> JSONResponse:
         ("--persona", "persona"),
         ("--owner-name", "ownerName"),
         ("--preset", "preset"),
+        ("--tone", "tone"),
     ):
         value = str(payload.get(key) or "").strip()
         if value:
@@ -545,18 +635,142 @@ async def note_file(stem: str, ext: str) -> FileResponse:
     return FileResponse(path, filename=path.name)
 
 
+CERT_DIR = _ROOT / "certs"
+CERT_FILE = CERT_DIR / "lan-cert.pem"
+KEY_FILE = CERT_DIR / "lan-key.pem"
+NAMES_FILE = CERT_DIR / "lan-names.json"
+
+_MKCERT_HOME = (
+    pathlib.Path(os.environ.get("LOCALAPPDATA", "")) / "mkcert" if os.name == "nt" else None
+)
+
+
+def _mkcert():
+    """The mkcert binary and the environment it needs, if it is available."""
+    if _MKCERT_HOME and _MKCERT_HOME.is_dir():
+        for exe in sorted(_MKCERT_HOME.glob("mkcert*.exe")):
+            # CAROOT must point at the same root CA the other apps used, or
+            # mkcert makes a second one that nothing already trusts.
+            return str(exe), {**os.environ, "CAROOT": str(_MKCERT_HOME)}
+    found = shutil.which("mkcert")
+    return (found, dict(os.environ)) if found else None
+
+
+def _root_ca() -> pathlib.Path | None:
+    """The mkcert root CA *certificate*. Public half only, never the key."""
+    tool = _mkcert()
+    if not tool:
+        return None
+    root = pathlib.Path(tool[1].get("CAROOT", "")) / "rootCA.pem"
+    return root if root.is_file() else None
+
+
+def _ensure_cert(names):
+    """A certificate covering `names`, generated on demand.
+
+    Browsers only hand over the microphone in a secure context, so recording a
+    voice from a phone needs HTTPS: localhost is exempt, a LAN address is not.
+    A certificate's names are fixed when it is generated, unlike the address it
+    covers, so the names used are recorded beside it and the certificate is
+    regenerated by itself whenever this machine's address changes.
+    """
+    want = sorted(names)
+    if CERT_FILE.is_file() and KEY_FILE.is_file() and NAMES_FILE.is_file():
+        try:
+            if json.loads(NAMES_FILE.read_text(encoding="utf-8")) == want:
+                return str(CERT_FILE), str(KEY_FILE)
+        except (OSError, json.JSONDecodeError):
+            pass  # unreadable, so regenerate
+
+    tool = _mkcert()
+    if not tool:
+        return None
+    exe, env = tool
+    CERT_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(  # noqa: S603 - fixed binary, names come from our own interfaces
+            [exe, "-cert-file", str(CERT_FILE), "-key-file", str(KEY_FILE), *want],
+            cwd=str(_ROOT), env=env, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.warning("Could not generate a certificate: %s", exc)
+        return None
+    NAMES_FILE.write_text(json.dumps(want), encoding="utf-8")
+    return str(CERT_FILE), str(KEY_FILE)
+
+
+def _lan_ips() -> list[str]:
+    """This machine's addresses on the local network."""
+    found = set()
+    for addrs in psutil.net_if_addrs().values():
+        for addr in addrs:
+            if addr.family == socket.AF_INET and not addr.address.startswith(
+                ("127.", "169.254.")
+            ):
+                found.add(addr.address)
+    return sorted(found)
+
+
+class _IgnoreClientDisconnect(logging.Filter):
+    """Drop the traceback Windows prints when a client vanishes mid-connection.
+
+    On the proactor event loop, a browser closing a TLS connection abruptly --
+    a probe, a closed tab, tapping through the certificate warning -- leaves
+    asyncio shutting down a socket that is already gone, and it logs the whole
+    stack at ERROR. Nothing is wrong and no request is lost, but a stack trace
+    in the window the user watches for real failures is worse than useless.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        return not (
+            isinstance(exc, (ConnectionResetError, ConnectionAbortedError))
+            and getattr(exc, "winerror", None) in (10053, 10054)
+        )
+
+
 def main() -> int:
     import uvicorn
+
+    logging.getLogger("asyncio").addFilter(_IgnoreClientDisconnect())
 
     if not PAGE.is_file():
         print(f"Missing {PAGE}", file=sys.stderr)
         return 1
 
-    url = f"http://{HOST}:{PORT}"
-    print(f"Interface running at {url}")
+    ips = _lan_ips() if ALLOW_LAN else []
+    ssl_args = {}
+    scheme = "http"
+    if ALLOW_LAN:
+        # localhost is a secure context on its own; a LAN address is not, and
+        # without one the browser silently refuses the microphone, so recording
+        # a voice from a phone would not work.
+        cert = _ensure_cert(["localhost", "127.0.0.1", "::1", *ips])
+        if cert:
+            ssl_args = {"ssl_certfile": cert[0], "ssl_keyfile": cert[1]}
+            scheme = "https"
+
+    local = f"{scheme}://127.0.0.1:{PORT}"
+    print(f"Interface running at {local}")
+    if ALLOW_LAN:
+        # Printed rather than guessed at: the address changes with the network,
+        # and the one Windows reports first is often a VPN adapter.
+        for ip in ips:
+            print(f"  on this network:   {scheme}://{ip}:{PORT}")
+        if scheme == "https":
+            print("  Recording a voice from a phone needs this https:// address.")
+            if _root_ca() and ips:
+                print(f"  To stop the certificate warning, open this on the phone")
+                print(f"  once and install it:  https://{ips[0]}:{PORT}/rootCA.crt")
+        else:
+            print("  WARNING: no certificate, serving plain http. A phone will")
+            print("  refuse microphone access, so voice recording will not work.")
+            print("  Install mkcert to fix that.")
+        print("  ALLOW_LAN is on, so anyone on your network can drive this.")
     print("Close this window to shut it down.")
-    threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+    threading.Timer(1.0, lambda: webbrowser.open(local)).start()
+    uvicorn.run(app, host=HOST, port=PORT, log_level="warning", **ssl_args)
     return 0
 
 

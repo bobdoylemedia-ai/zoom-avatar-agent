@@ -1,227 +1,291 @@
 # Zoom Avatar Agent
 
-Send an AI avatar into a Zoom, Google Meet, Microsoft Teams, or Webex meeting to
-act as your agent — your face, your cloned voice, and your knowledge base.
+Send an AI avatar into a Zoom, Google Meet, Microsoft Teams or Webex meeting to
+act as your stand-in — your face, your cloned voice, and your knowledge base —
+and steer it while it's there.
 
-Built on [LiveKit Agents](https://docs.livekit.io/agents/) with a
-[LemonSlice](https://lemonslice.com) avatar and a [Fish Audio](https://fish.audio)
-voice. Carried over from an earlier browser-based 1:1 avatar app — see
-[HANDOFF.md](HANDOFF.md) for what transferred, what was left behind, and why.
+Built on [LiveKit Agents](https://docs.livekit.io/agents/), with voices from
+[Fish Audio](https://fish.audio) and the animated face from
+[LemonSlice](https://lemonslice.com). [HANDOFF.md](HANDOFF.md) has the design
+notes and every gotcha found along the way.
+
+## What it does
+
+- **Joins real meetings** as a participant, announces itself as an AI, and holds
+  a two-way conversation.
+- **Speaks in any voice on your Fish Audio account**, with a **tone** you choose —
+  warm, upbeat, excited, professional or calm.
+- **Creates new voices from the control panel**: describe one in words, record 30
+  seconds, or upload a clip and trim it.
+- **Only speaks when spoken to**, keeps listening briefly for follow-up
+  questions, and goes quiet again when someone says "thanks".
+- **Lets you send it lines mid-meeting** — facts that just changed, or things to
+  say out loud — without anyone in the call seeing you do it.
+- **Takes notes** on everything said, and emails you a recap with a "For you"
+  section when the meeting ends.
+- **Answers from your documents**, searched on your own machine.
 
 ## How it works
 
 ```
-  src/send_to_meeting.py                src/agent.py (worker)
-  ──────────────────────                ─────────────────────
-  meeting URL + avatar config  ──dispatch──▶  join as a bot participant
-                                              listen  → STT
-                                              think   → LLM + RAG over knowledge/
-                                              speak   → Fish Audio voice
-                                              appear  → LemonSlice avatar video
+  control panel / src/send_to_meeting.py        src/agent.py (worker)
+  ──────────────────────────────────────        ─────────────────────
+  meeting link + avatar settings  ──dispatch──▶  joins as a participant
+                                                 listens → speech-to-text
+                                                 thinks  → LLM + your documents
+                                                 speaks  → Fish Audio voice + tone
+                                                 appears → LemonSlice avatar video
 ```
 
 Two processes: a long-running **worker** that waits for jobs, and a **dispatch**
-command that sends it into a specific meeting.
+that sends it into a specific meeting. The control panel starts and stops the
+worker for you.
 
-## Prerequisites
+## Before you start
 
-- Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/)
-- Accounts / keys: LiveKit, LemonSlice, Fish Audio
+- **Python 3.10–3.12** and **[uv](https://docs.astral.sh/uv/)**. Built and tested on Windows;
+  the Python should run elsewhere, but only Windows has been tried.
+- Accounts and API keys for:
+  - **[LiveKit Cloud](https://cloud.livekit.io)** — transport, plus the speech-to-text
+    and language model, billed through LiveKit
+  - **[Fish Audio](https://fish.audio/app/api-keys)** — the voice
+  - **[LemonSlice](https://lemonslice.com)** — the avatar video
+- Optional: a Gmail app password, if you want notes emailed to you
+
+The `.bat` launchers are for Windows. On other systems, use the command-line
+equivalents below.
 
 ## Setup
 
-```bash
-cp .env.example .env.local    # then fill in the keys
-uv sync
-```
+1. Copy `.env.example` to `.env.local` and fill in your keys. **Never commit
+   `.env.local`** — it's already in `.gitignore`.
+2. Install everything:
 
-Copy a photo of the face you want into `avatars/`. **Any size or shape works** —
-it gets resized and re-oriented automatically. A clear, front-facing headshot
-gives the best result; a tall crop suits the avatar frame slightly better than a
-wide one, but that's a preference, not a requirement.
+   ```bash
+   uv sync
+   ```
 
-If you don't name a file when dispatching, the agent just uses the first image
-it finds in `avatars/`.
+3. Put a photo of the face you want in `avatars/`. Any size or shape works; it's
+   resized and rotated automatically. A clear, front-facing headshot looks best.
 
-## Run (the interface)
+## Run it
 
-Double-click **`0-Open-Interface.bat`**. Your browser opens on the control panel,
-and everything happens there:
+Double-click **`0-Open-Interface.bat`**, or run `uv run python src/webui.py`.
+Your browser opens on the control panel.
 
-1. **Start agent** in the top right, and wait for the dot to go green.
-2. Pick a **preset**, or set the face, voice and knowledge base yourself.
-3. Check **Attending on behalf of** — the avatar says this when it joins, uses
-   it to answer "who is your owner?", and promises messages will reach that
-   person by name. It defaults to `OWNER_NAME` from `.env.local` and is saved
-   with the preset.
-4. Paste the **meeting link** and hit **Send avatar to meeting**.
+1. **Start agent** (top right) and wait for the dot to turn green. Sending before
+   it's green is refused — a worker that is running but not yet registered would
+   silently drop the job.
+2. Choose a **face**, a **voice**, a **tone** and a **knowledge base** — or load a
+   **preset**, and save your own with **Save preset**.
+3. Set **Attending on behalf of** — the avatar says who it stands in for, and
+   promises messages will reach that person by name.
+4. Paste the **meeting link** and click **Send avatar to meeting**.
 
-The panel also uploads photos and builds knowledge bases from documents, lists
-recent meeting notes for download, and shows the agent's log when something goes
-wrong. It serves on `127.0.0.1` only — never the network — because it can start
-processes and send an avatar into a meeting.
+**Zoom passcodes must be inside the link** (`?pwd=...`). The avatar may wait in the
+waiting room until the host admits it.
 
-The `.bat` files for the individual steps (`1-Start-Agent`, `2-Send-To-Meeting`,
-`3-Meeting-Notes`, `4-Email-Test`, `Stop-Agent`) all still work if you prefer
-them.
+**Stop** takes the avatar out of the call, waits for it to write its notes, then
+shuts the worker down.
 
-## Run (command line)
+## The voice
 
-Terminal 1 — start the worker and leave it running:
+### Choosing a voice and a tone
 
-```bash
-uv run python src/agent.py dev
-```
+The **Voice** list is every voice on your Fish Audio account. **Hear this voice**
+plays a short sample using the tone you've selected.
 
-Terminal 2 — send it into a meeting:
+**Tone** changes how the voice delivers its lines. Fish Audio's S2.1 Pro model
+accepts a written direction in square brackets — `[upbeat, bright, smiling while
+speaking]` — and performs it without reading it out loud. The app adds that
+direction to every sentence the avatar speaks, so the energy holds through a
+whole answer. Set the default with `AVATAR_TONE` in `.env.local`.
 
-```bash
-uv run python src/send_to_meeting.py "https://us05web.zoom.us/j/1234567890?pwd=abc123"
-```
+### Creating a voice
 
-**Zoom passcodes must be inside the URL** as `?pwd=...`. For Meet / Teams /
-Webex, use the link from the calendar invite. The bot may sit in the waiting room
-until the host admits it.
+Click **Create a new voice…** and pick one of three ways:
 
-A fuller run:
+| Tab | How |
+| --- | --- |
+| **Describe it** | Write a description, click **Generate voices**, listen to the options and keep one |
+| **Record now** | Record straight from your microphone; it stops at 30 seconds |
+| **Upload audio** | Choose a file and drag the handles to trim it |
 
-```bash
-uv run python src/send_to_meeting.py "https://us05web.zoom.us/j/1234567890?pwd=abc123" --bot-name "Jess (AI)" --image "jess.jpg" --knowledge "my-kb" --require-address
-```
+New voices are saved **privately** to your Fish Audio account, so they also
+appear in anything else connected to it. If one doesn't show up in the list,
+click **Refresh from Fish Audio**.
 
-`--require-address` makes the avatar stay quiet unless someone says its name.
-Recommended for any call with more than one other person in it — see the
-turn-taking section of [HANDOFF.md](HANDOFF.md).
+## In the meeting
 
-Add `--dry-run` to see the dispatch command without sending anything.
+### Only speak when spoken to
+
+Tick **Only speak when spoken to** for any call with more than one other person.
+The avatar then answers only when it hears its display name. Speech-to-text
+often misspells unusual names, so it also matches names that *sound* right.
+
+After it speaks, it keeps listening for `FOLLOW_UP_SECONDS` (15), so a follow-up
+like "and who owns that?" still gets an answer — up to `FOLLOW_UP_MAX` (2) in a
+row before the name is needed again. Set either to `0` to always require the name.
+
+To end the exchange early, say one of these — the name is optional:
+
+> thanks · thank you · that's all · that's it · we're good · we're all set ·
+> we're done · nothing else · no more questions · you can go · stand down
+
+It replies, then stays quiet until it hears its name again.
+
+### Sending it lines mid-meeting
+
+While the avatar is in a call, the **Send a line into the meeting** card has
+three buttons:
+
+| Button | What happens |
+| --- | --- |
+| **Tell it this** | Nothing is said. The avatar now knows it for the rest of the call, and it takes priority over the knowledge base |
+| **Say it out loud now** | The avatar says it in its own words and in character, without mentioning it was sent a line |
+| **Stop listening** | Same as saying "thanks" — quiet until someone uses its name |
+
+Everything you send is recorded in the transcript as **sent in by the owner**.
 
 ## Meeting notes
 
-The agent hears everything said in the meeting, whether or not it replies -- the
-"only speak when spoken to" gate suppresses the reply, not the listening. Every
-meeting therefore leaves two files in `meetings/`:
+The avatar hears everything, including what it doesn't answer. Each meeting
+leaves these in `meetings/`:
 
 | File | What |
 | --- | --- |
-| `<date>-<name>.jsonl` | Every turn, appended as it happens |
+| `<date>-<name>.jsonl` | Every turn, written as it happens |
 | `<date>-<name>.md` | The recap, written when the meeting ends |
-| `<date>-<name>.pdf` | The same recap, formatted for reading |
+| `<date>-<name>.pdf` | The recap, formatted for reading |
 
-The recap has Summary, Key points, Decisions, Action items, **For you** (questions
-aimed at you, things the avatar was asked to pass along, things it couldn't
-answer) and Open questions.
+The recap has Summary, Key points, Decisions, Action items, **For you** and Open
+questions.
 
-**Notes cannot be lost.** The `.jsonl` is written turn by turn while the meeting
-happens. If the agent doesn't get to write the recap -- you stopped it mid-call,
-it crashed, the window got closed -- the interface notices a transcript with no
-write-up, says so, and **Write any missing notes** produces the recap, PDF and
-email from it. Stopping the agent does that automatically.
+**Notes can't be lost.** The transcript is saved turn by turn, so if the recap
+never got written — a crash, a closed window — the panel notices, and **Write any
+missing notes** rebuilds the recap, PDF and email from the transcript.
 
-Double-click `3-Meeting-Notes.bat` to open the folder, newest first.
+- `NOTES_FORMATS`: `pdf` (default), `docx`, `both` or `none`
+- `NOTES_EMAIL_TO`: set it to have the notes emailed when each meeting ends.
+  Gmail needs a 16-character **app password**
+  (<https://myaccount.google.com/apppasswords>) in `SMTP_PASSWORD`. Test it with
+  `4-Email-Test.bat` or `uv run python src/mailer.py`.
+- Rebuild any recap: `uv run python src/recap.py meetings/<file>.jsonl`
 
-The `.jsonl` is the source of truth and the `.md` is derived from it, so a
-recap can always be rebuilt:
+**A real limitation:** meeting audio arrives as one mixed stream with no speaker
+labels, so notes record *what* was said, not *who* said it. Names appear only
+where someone was named out loud, or where a line came from meeting chat.
 
-```bash
-uv run python src/recap.py meetings/<file>.jsonl
-```
+## Knowledge bases
 
-Run it with no arguments to list recent transcripts. Add `--no-email` to render
-without sending, or `--resend` to re-render and re-send the existing recap
-without paying for another summarization.
-
-### PDF and Word
-
-`NOTES_FORMATS` in `.env.local` controls what gets rendered next to the markdown:
-`pdf` (the default), `docx`, `both`, or `none`. Both are produced by pure-Python
-libraries, so there's no Node or GTK toolchain to install.
-
-### Emailing the notes to yourself
-
-Set `NOTES_EMAIL_TO` in `.env.local` and the notes are emailed automatically when
-each meeting ends, with the PDF attached. Leave it empty and nothing is sent.
-
-Gmail needs a **16-character App Password**, not your account password, and
-2-Step Verification has to be on: <https://myaccount.google.com/apppasswords>.
-Paste it into `SMTP_PASSWORD` in `.env.local` yourself -- that file is gitignored
-and the password is never logged.
-
-Prove it works before trusting it:
-
-```bash
-uv run python src/mailer.py
-```
-
-or double-click `4-Email-Test.bat`. Emailing is best-effort by design: the
-markdown recap and the raw transcript are on disk before any of this runs, so a
-bad password can never cost you a meeting.
-
-**One real limitation:** meeting audio arrives as a single mixed stream with no
-per-speaker labels, so the transcript records *what was said*, not *who said it*.
-The recap is instructed never to invent an attribution -- names appear only where
-someone was named out loud, or where a line came from meeting chat (those do
-carry a sender). If you need reliable per-speaker attribution, that has to come
-from the meeting platform's own transcript, not from here.
-
-## Give it a knowledge base
+In the panel, type a name under **Knowledge base** and click **Add documents…**.
+PDF, Word, text and Markdown all work, and several files become one knowledge
+base. From the command line:
 
 ```bash
 uv run python src/ingest.py my-kb ./docs
 ```
 
-Accepts PDF, DOCX, TXT, and MD — a single file, several files, or a folder.
-Writes `knowledge/my-kb.json` plus a vector index next to it, then pass
-`--knowledge my-kb` when dispatching. Embeddings run on-device via fastembed, so
-documents never leave the machine.
+Embeddings run on your machine with fastembed, so documents never leave it.
 
-Indexes copied over from the browser app are already in `knowledge/` and work
-as-is.
+### Spreadsheets
 
-## Avatar presets
+Language models are unreliable at arithmetic, and document search cuts tables
+apart. `sheet_facts.py` calculates the figures in Python instead and writes them
+as plain question-and-answer facts the avatar can quote:
 
-Drop a `presets.json` in the project root (same shape as the browser app's
-`app/data/presets.json`) and dispatch with `--preset "<id or label>"`. Explicit
-flags override preset values.
+```bash
+uv run python src/sheet_facts.py data.csv --out knowledge/my-sheet.md
+```
 
-Re-point any copied preset's `image` at a local filename — the old app's URLs are
-LAN addresses that LemonSlice cannot reach.
+- `--since 2020-01-01` / `--until …` keep only rows in a date range
+- `--drop revenue` leaves a column out entirely — use it for anything the avatar
+  shouldn't be able to say out loud
+
+Then add the `.md` file as a knowledge base. It reads CSV — export Excel or Google
+Sheets to CSV first. Works well for already-summarised data (analytics exports,
+budgets, KPIs); it isn't a replacement for querying thousands of raw
+transactions.
+
+## Command line
+
+Start the worker and leave it running:
+
+```bash
+uv run python src/agent.py dev
+```
+
+Send it into a meeting:
+
+```bash
+uv run python src/send_to_meeting.py "https://us05web.zoom.us/j/1234567890?pwd=abc123" --bot-name "Jess (AI)" --image "jess.jpg" --knowledge "my-kb" --tone upbeat --require-address
+```
+
+Add `--dry-run` to see what would be sent without sending it.
+
+## Reaching the panel from another device (experimental)
+
+The panel only answers on this machine by default, because it can start programs
+and send an avatar into meetings. Set `ALLOW_LAN=1` to also serve it on your local
+network. The startup window prints the address to use.
+
+- If [mkcert](https://github.com/FiloSottile/mkcert) is installed, the panel serves
+  HTTPS with a certificate for your network address — browsers only allow
+  microphone recording over HTTPS. Open `/rootCA.crt` on the other device to
+  install the certificate authority.
+- On Windows you may need a firewall rule for port 8765, limited to your local
+  network.
+- **Known issue:** iOS Safari refuses mkcert's certificates because they're valid
+  for longer than Apple allows, and fails with "the network connection was lost".
+- With `ALLOW_LAN=1`, anyone on your network can use the panel.
+
+## Settings
+
+All in `.env.local`. See `.env.example` for descriptions.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `OWNER_NAME` | — | Who the avatar stands in for |
+| `BOT_NAME` | `<OWNER_NAME> (AI)` | The avatar's display name |
+| `DEFAULT_VOICE_ID` | Fish plugin default | Voice used when none is chosen |
+| `AVATAR_TONE` | `upbeat` | `off`, `warm`, `upbeat`, `excited`, `professional`, `calm` |
+| `FOLLOW_UP_SECONDS` | `15` | How long it keeps listening after speaking |
+| `FOLLOW_UP_MAX` | `2` | Unaddressed follow-ups before its name is needed |
+| `JOIN_DELAY_SECONDS` | `3.5` | Pause before its opening line |
+| `NOTES_FORMATS` | `pdf` | `pdf`, `docx`, `both`, `none` |
+| `NOTES_EMAIL_TO` | — | Where to email the notes |
+| `BRAND_NAME` | — | Your name in the panel header |
+| `ALLOW_LAN` | off | Serve the panel on your local network |
+
+## Making it yours
+
+Set `BRAND_NAME` to put your name in the header, and drop a square
+`logo-small.png` in `brand/` to show your logo beside it. `brand/` is gitignored,
+so your logo stays out of version control.
 
 ## Layout
 
 | Path | What |
 | --- | --- |
-| `src/agent.py` | The worker: joins the meeting, runs the conversation loop |
-| `src/rag.py` | On-device embeddings, chunking, vector retrieval |
-| `src/ingest.py` | Build a knowledge base from local documents |
-| `src/send_to_meeting.py` | Dispatch the avatar into a meeting |
-| `avatars/` | Portrait images (gitignored) |
-| `knowledge/` | Knowledge bases and their vector indexes (gitignored) |
-| `src/notes.py` | Transcript capture and recap generation |
-| `src/recap.py` | Rebuild a recap from a saved transcript |
-| `src/export.py` | Render a recap to PDF / DOCX |
-| `src/mailer.py` | Email the notes (also the SMTP self-test) |
-| `src/delivery.py` | Render + email, shared by both paths |
-| `src/webui.py` | The interface's web server |
-| `src/webui.html` | The interface itself (one page, no build step) |
-| `src/catalog.py` | Lists avatars/voices/knowledge, controls the worker |
-| `src/voices.py` | Clone, design and audition Fish Audio voices |
-| `brand/` | Your own logo, if you add one (gitignored) |
-| `src/stop_agent.py` | Stops the agent and backfills missing notes |
-| `meetings/` | Transcripts and recaps (gitignored) |
-| `HANDOFF.md` | Design notes, gotchas, and open problems |
-
-## Making it yours
-
-The interface header is unbranded out of the box. Set `BRAND_NAME` in
-`.env.local` to put your own name in it, and drop a square `logo-small.png` in
-`brand/` to sit beside it — without one, no logo is shown at all. `brand/` is
-gitignored, so your mark stays yours.
-
-`OWNER_NAME` is the person the avatar stands in for. The bot's display name
-follows from it (`Jane Smith (AI)`) unless you set `BOT_NAME` yourself.
+| `src/agent.py` | The worker: joins the meeting, runs the conversation |
+| `src/send_to_meeting.py` | Sends the avatar into a meeting |
+| `src/webui.py`, `src/webui.html` | The control panel |
+| `src/catalog.py` | Lists faces, voices and knowledge; starts and stops the worker |
+| `src/voices.py` | Creates and previews Fish Audio voices |
+| `src/rag.py`, `src/ingest.py` | Document search and knowledge-base building |
+| `src/sheet_facts.py` | Turns a spreadsheet into quotable facts |
+| `src/notes.py`, `src/recap.py` | Transcripts and recaps |
+| `src/export.py`, `src/mailer.py`, `src/delivery.py` | PDF/Word output and email |
+| `src/stop_agent.py` | Stops the agent and writes any missing notes |
+| `avatars/`, `knowledge/`, `meetings/`, `brand/` | Your files — all gitignored |
+| `HANDOFF.md` | Design notes, gotchas and open problems |
 
 ## A note on disclosure
 
-The avatar introduces itself as an AI on joining, by default. Leave that on.
-Recording and participation consent laws vary by jurisdiction, and an undisclosed
-AI participant is a problem in several of them.
+The avatar introduces itself as an AI when it joins. Leave that on. Recording and
+consent laws vary by place, and an undisclosed AI in a meeting is a problem in
+many of them.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

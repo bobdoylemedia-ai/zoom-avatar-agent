@@ -50,6 +50,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--knowledge", help="Knowledge base name in knowledge/ (e.g. my-kb).")
     p.add_argument("--persona", help="Inline persona override.")
     p.add_argument(
+        "--tone",
+        help="How the avatar should sound: off, warm, upbeat, excited, professional, calm.",
+    )
+    p.add_argument(
         "--require-address",
         action="store_true",
         help="Only reply when addressed by name. Recommended for calls with several people.",
@@ -114,6 +118,8 @@ def _build_metadata(args: argparse.Namespace) -> dict:
         meta["knowledgeId"] = args.knowledge
     if args.persona:
         meta["persona"] = args.persona
+    if args.tone:
+        meta["tone"] = args.tone
     if args.require_address:
         meta["requireAddress"] = True
     if args.no_announce:

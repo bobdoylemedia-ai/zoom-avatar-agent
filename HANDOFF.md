@@ -1,4 +1,4 @@
-# Handoff: what carried over from BDM Real-Time Avatar
+# Handoff: what carried over from the browser avatar app
 
 Written 2026-09-10, at the start of this project. The source project was a
 browser-based 1:1 avatar call — a Next.js frontend plus a Python LiveKit agent.
@@ -16,7 +16,7 @@ the avatar is **dispatched into a third-party meeting** as a bot participant.
 
 The other end changes; the middle does not.
 
-| | BDM Real-Time Avatar | This project |
+| | Browser avatar app | This project |
 |---|---|---|
 | Who calls whom | Browser joins a LiveKit room | Agent joins Zoom/Meet/Teams/Webex |
 | Trigger | Web form → `/api/token` | `lk dispatch create` with metadata |
@@ -58,7 +58,7 @@ here (`_load_avatar_image`) — drop a file in `avatars/` and pass its name. It
 removes the Zoom example's `LEMONSLICE_IMAGE_URL` requirement entirely.
 
 Related: the old app's `presets.json` has image URLs like
-`https://192.168.0.48:3000/uploads/...`. Those are dead outside that LAN. If you
+`https://192.168.x.x:3000/uploads/...`. Those are dead outside that LAN. If you
 copy presets over, re-point `image` at a local filename.
 
 ### 2. EXIF rotation and the upload size cap
@@ -80,7 +80,8 @@ variable**. That means the browser app appears to work with no Fish key in
 ### 4. Fish Audio voices are addressed by `reference_id`
 
 `fishaudio.TTS(voice_id=...)` wants the Fish Audio *model reference_id*, not a
-name. Carried-over default is `8b5e9142f2184439b48dee26169d9dba` ("Melmore 2").
+name. Voices are private to the account that made them, so the default comes
+from `DEFAULT_VOICE_ID`, or the plugin's own public voice when that is unset.
 
 ### 5. Don't reuse the browser app's `RoomOptions` — and drop noise cancellation
 
@@ -131,8 +132,8 @@ The original goal is met: a preset combining a real portrait, a cloned Fish
 Audio voice and a personal knowledge base joins a Zoom call and converses,
 confirmed against a live meeting.
 
-Knowledge bases were sized between roughly 4k and 180k characters during
-testing; both ends worked, and retrieval quality mattered far more than size.
+Knowledge bases between roughly 4k and 180k characters were used in testing;
+both ends worked, and retrieval quality mattered more than size.
 
 Confirmed working, in the order it was built and tested:
 join a Zoom call -> avatar + cloned voice -> two-way conversation ->
@@ -320,7 +321,7 @@ that case stays legible.
 The note-taking pipeline is entirely invisible to the LLM. Transcript capture,
 the recap, the PDF and the email all happen outside the conversation, so the
 model has no way to know they exist. Asked to pass a message to its owner, it
-said "I can't relay messages directly to individuals like Bob", and then "I
+said "I can't relay messages directly to individuals like your owner", and then "I
 don't have the functionality to take notes or send messages automatically".
 
 Both were false. The notes for that very meeting were written correctly, with
@@ -338,7 +339,7 @@ meeting, and no commitments on the owner's behalf.
 
 Verified by replaying the exact failed exchange against the new instructions --
 it now accepts the message, repeats back "Thursday at around nine AM", names its
-owner, and correctly refuses to "text Bob right now".
+owner, and correctly refuses to "text them right now".
 
 `OWNER_NAME` (env, or `ownerName` per dispatch) exists because it was also asked
 "who is your owner?" and did not know.
@@ -360,9 +361,25 @@ meeting; on seeing it, it calls `ctx.shutdown()`, which runs the shutdown
 callbacks in order: leave the meeting, then write the notes.
 
 `stop_worker()` writes that file, waits (75s -- long enough to leave, summarize,
-render and email), then terminates. It only waits when the log shows a meeting is
-actually in progress; an idle worker has nothing polling and is stopped at once,
-and is not reported as "forced" because that is unremarkable.
+render and email), then terminates. It only waits when a meeting is actually in
+progress; an idle worker has nothing polling and is stopped at once, and is not
+reported as "forced" because that is unremarkable.
+
+**"In a meeting" is a question about state, not about the log's contents.** The
+first version asked whether the last 600 log lines *mentioned* a meeting
+(`"Taking notes to" in tail`), which stayed true for as long as that line sat in
+the window. A meeting that had ended ten minutes earlier therefore still counted,
+so every stop burned the full 75 seconds while nothing was polling the request
+file -- the button looked broken, then worked. `_meeting_in_progress()` now
+compares the newest start marker against the newest end marker. "Meeting over;
+writing recap" is the end marker because it is logged unconditionally at the top
+of the recap shutdown callback; "Left the meeting." is skipped whenever leaving
+raises. Measured after the fix: 0.1s to stop an idle worker, down from 88s.
+
+The other half of that bug was feedback in the wrong place again -- the Stop
+button is in the header, its status message rendered in the send card several
+sections down, and the status poll kept repainting "agent ready" over the top.
+The pill beside the button now says "stopping..." and the poll leaves it alone.
 
 ## Voice creation
 
@@ -382,8 +399,7 @@ user's account so any program reading that account can use them:
 * **preview** -- `POST /v1/tts`, for auditioning any of the 54 existing voices
   before committing to one.
 
-Voices are tagged `bdm-avatar-app`, the same tag the browser avatar app uses, so
-both can tell which voices they created.
+Voices are tagged `zoom-avatar-agent`, so the app can tell which voices it created.
 
 Trimming and recording happen in the browser: `decodeAudioData` into an
 AudioBuffer, a canvas waveform with the selection highlighted, and a hand-rolled
@@ -391,6 +407,65 @@ AudioBuffer, a canvas waveform with the selection highlighted, and a hand-rolled
 samples, so no library and no re-encode). Recording uses `MediaRecorder` with a
 hard stop at 30s, and an over-long upload is pre-trimmed to 30s on load rather
 than shown as an error to fix by hand.
+
+## Delivery tone: the direction has to be on every sentence
+
+A trained Fish voice reads flat. `s2.1-pro` takes a free-form direction in
+square brackets at the head of the text -- `[upbeat, bright, smiling while
+speaking, lively pace]` -- and **consumes it rather than speaking it**. Verified
+rather than assumed: each tagged line was synthesized and the audio fed back
+through Fish's own `/v1/asr`, which returned the line with no trace of the tag.
+`(parenthesis)` tags work too; those are the S1 syntax.
+
+**The trap.** `livekit-plugins-fishaudio` does not send a turn to Fish as one
+piece. It runs the text through a sentence tokenizer and sends **each sentence
+as its own synthesis unit** -- `{"event":"text"}` then `{"event":"flush"}`, per
+sentence -- so that audio arrives at sentence boundaries instead of waiting for
+`chunk_length` characters. A direction placed once at the head of the turn
+therefore reaches only the first sentence:
+
+```
+flush 1: '[upbeat, ...] Hi, thanks for having me.'
+flush 2: "I'm standing in for Alex today."         <- undirected
+flush 3: "What's first?"                            <- undirected
+```
+
+First sentences are usually short ("Hi there."), so in practice almost all of
+the speech came out flat and the feature looked like it did nothing at all.
+This cost an afternoon, because the obvious first implementation -- overriding
+`Agent.tts_node` to prepend the tag to the turn's text stream -- is the wrong
+seam and fails silently.
+
+**The fix** is `TonedSentenceTokenizer` in `agent.py`, handed to the plugin
+through its supported `tokenizer=` constructor argument. It wraps the default
+blingfire tokenizer and re-attaches the direction to every sentence *after*
+tokenization, so each unit that actually reaches the socket carries it. It skips
+any sentence already starting with `[`, so nothing gets double-tagged.
+
+**The audition path and the speaking path must agree on the model, or the
+audition lies.** This cost far more time than the tokenizer did.
+`voices.py` sent `model: s2-pro` while the plugin speaks with `s2.1-pro`, and
+**s2-pro does not act on the bracketed direction at all**. So "Hear this voice"
+came back flat while the identical tone in a real meeting sounded right, and
+every hand-written test script sounded right too because those all named
+`s2.1-pro` explicitly. `TTS_MODEL` in `voices.py` now carries a comment saying it
+has to track the plugin's `DEFAULT_MODEL`; if you ever change one, change both.
+
+The lesson underneath it: when two paths differ, diff the requests before
+theorising about behaviour. Three wrong explanations were built and shipped --
+tokenization, then per-sentence tagging in preview, then process staleness --
+while the actual difference was one constant, one line apart from the code being
+edited, never compared.
+
+Related: a script that drives `fishaudio.TTS` outside a job has to be wrapped in
+`async with livekit.agents.utils.http_context.open():` or the plugin refuses to
+open an HTTP session. `voices.preview` also repeats the direction per sentence,
+which is not what fixed it but does keep the audition shaped like the call.
+
+Tones live in one `TONES` table in `agent.py`; the interface builds its dropdown
+from it via `/api/state`, so the list and the defaults cannot drift apart.
+`AVATAR_TONE` sets the default, an unknown value falls back rather than failing
+the join, and `prosody.speed` is exposed by the plugin but not yet wired up.
 
 ## Theming
 
@@ -435,10 +510,42 @@ first join test isn't fighting the gate.
 
 Known weaknesses of the crude version, in the order they'll bite:
 
-1. **Follow-ups die.** "Jess, what's our Q3 number?" works; "and Q4?" is dropped.
-   Needs a short window after the bot speaks where unaddressed turns still count.
-2. **STT mangles names.** Deepgram may render "Jess" as "Jeff"/"yes". Needs fuzzy
-   matching or a phrase hint.
+1. **Follow-ups die.** ~~"and Q4?" is dropped.~~ **Fixed.** For
+   `FOLLOW_UP_SECONDS` (15) after the avatar *finishes* speaking, an unaddressed
+   turn is treated as still aimed at it, up to `FOLLOW_UP_MAX` (2) in a row
+   before the name is required again. Timed from when it stops talking, not
+   starts, or a long answer spends its own window; monotonic, so a clock
+   correction cannot open or close it.
+
+   The cap is the important half. Every windowed answer restarts the clock, so
+   without one the avatar could chain replies through a conversation it is not
+   part of. The accepted cost is the reverse case: if two people turn to each
+   other within fifteen seconds of the avatar speaking, it will interject, at
+   most twice. Nothing in the audio can distinguish that from a follow-up --
+   one mixed stream, no speaker labels, and the meeting's attendees are not
+   participants the agent can see. Set either value to 0 to disable.
+
+   **Closing the window early matters as much as opening it.** Two exchanges and
+   you are done with it, but the window keeps it listening for another fifteen
+   seconds while the humans carry on -- so "thanks, Carl" (or the Stop listening
+   button) sets a `_dismissed` flag and it goes quiet until named again. A flag
+   and not a cleared clock, because the avatar answers the dismissal and that
+   reply would otherwise reopen the window it was just told to close. Dismissal
+   phrases are only matched on a turn already being answered and only when the
+   turn is short and not a question, so "thanks, and what about the budget?"
+   stays a question rather than a goodbye.
+2. **STT mangles names.** ~~Needs fuzzy matching.~~ **Partly fixed.** A real
+   call proved it: a bot named "Krendall" was transcribed "Krendel", "Crindle"
+   and "Crindle" in three consecutive turns, the literal check missed every
+   one, and the avatar sat silent while being addressed by name -- having just
+   announced "please say Krendall to get my attention". `_is_addressed` now
+   falls back to a consonant skeleton (`_phonetic_key`: digraphs folded, c/q->k,
+   vowels dropped, doubles collapsed), under which all three spellings become
+   `krndl`. Guarded to names of five letters or more with three or more
+   consonants, because short skeletons collide with ordinary words -- "Sam" and
+   "some" are both `sm`. Still misses: names with under three consonants
+   ("Louie" -> `l`, rejected as too collision-prone) and voiced/unvoiced swaps
+   ("Grendel" -> `grndl`).
 3. **No sense of being asked implicitly.** A direct question in a 1:1 call needs
    no name. Probably wants a cheap LLM classifier ("is this addressed to the
    assistant?") gating the expensive generation, rather than substring matching.

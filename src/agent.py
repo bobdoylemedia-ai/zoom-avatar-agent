@@ -3,11 +3,11 @@ Webex meeting, with a custom Fish Audio voice and a vector-RAG knowledge base.
 
 Ported from two sources:
   * `07-livekit-zoom/agent.py`      -> the `join_meeting()` / `room_options()` plumbing
-  * BDM Real-Time Avatar `agent.py` -> persona-from-metadata, Fish Audio TTS,
+  * The browser avatar app's `agent.py` -> persona-from-metadata, Fish Audio TTS,
                                        local-image upload, vector RAG
 
 Run the worker:      uv run python src/agent.py dev
-Send it to a call:   scripts/send-to-meeting.ps1 "<MEETING URL>"
+Send it to a call:   uv run python src/send_to_meeting.py "<MEETING URL>"
 
 See HANDOFF.md for the design notes and known gotchas.
 """
@@ -20,6 +20,7 @@ import logging
 import os
 import pathlib
 import re
+import time
 from io import BytesIO
 
 import aiohttp
@@ -27,7 +28,15 @@ from dotenv import load_dotenv
 from PIL import Image, ImageOps
 
 from livekit import agents
-from livekit.agents import Agent, AgentServer, AgentSession, TurnHandlingOptions, inference, utils
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    TurnHandlingOptions,
+    inference,
+    tokenize,
+    utils,
+)
 from livekit.plugins import fishaudio, lemonslice
 
 import delivery
@@ -48,6 +57,10 @@ MEETINGS_DIR = _ROOT / "meetings"
 # console signal to a process started without a console -- see
 # catalog.stop_worker.
 STOP_REQUEST = _ROOT / "logs" / "stop.request"
+# Lines the owner sends into a meeting that is already running -- a correction,
+# a fact that just changed, an instruction. A queue rather than a single file so
+# two sent seconds apart cannot overwrite each other.
+WHISPER_QUEUE = _ROOT / "logs" / "whisper.jsonl"
 
 # Cap injected knowledge to keep real-time latency snappy (~12 pages / ~7.5k tokens).
 # Only used on the context-injection fallback path; RAG retrieval is per-turn.
@@ -73,12 +86,145 @@ If someone gets inappropriate, steer the conversation back to acceptable topics.
 DEFAULT_AGENT_PROMPT = "A person talking."
 DEFAULT_AGENT_IDLE_PROMPT = "Between speaking, stay relaxed and natural."
 
-# Fish Audio voice ("Melmore 2") carried over from the browser app.
-DEFAULT_VOICE_ID = "8b5e9142f2184439b48dee26169d9dba"
+# The voice used when none is chosen. Voices are private to a Fish Audio
+# account, so a hard-coded id only works for whoever owns it. Leave
+# DEFAULT_VOICE_ID unset and the Fish plugin's own public default is used.
+DEFAULT_VOICE_ID = os.getenv("DEFAULT_VOICE_ID", "").strip()
 
 # Seconds to wait after the avatar appears before it speaks its opening line.
 # Covers the meeting audio path coming up plus the AEC warmup; without it the
 # avatar is heard joining mid-sentence. Override with JOIN_DELAY_SECONDS.
+# How the avatar should sound. Fish Audio's s2.1-pro takes a free-form
+# natural-language direction in square brackets at the head of the text and
+# consumes it rather than reading it out -- verified by synthesizing each of
+# these and running the audio back through Fish's own ASR, which returned the
+# line without the tag. `temperature` is the plugin's expressiveness dial
+# (0.7 default); the livelier tones sit above it.
+TONES: dict[str, dict] = {
+    "off": {
+        "label": "Off (voice as trained)",
+        "tag": "",
+        "temperature": 0.7,
+    },
+    "warm": {
+        "label": "Warm and engaged",
+        "tag": "[warm, friendly, genuinely engaged, natural conversational energy]",
+        "temperature": 0.9,
+    },
+    "upbeat": {
+        "label": "Upbeat and bright",
+        "tag": "[upbeat, bright, smiling while speaking, lively pace]",
+        "temperature": 0.9,
+    },
+    "excited": {
+        "label": "Excited and high energy",
+        "tag": "[excited, high energy, enthusiastic, animated delivery]",
+        "temperature": 0.95,
+    },
+    "professional": {
+        "label": "Confident and professional",
+        "tag": "[confident, clear, professional, attentive and interested]",
+        "temperature": 0.85,
+    },
+    "calm": {
+        "label": "Calm and measured",
+        "tag": "[calm, measured, reassuring, unhurried]",
+        "temperature": 0.8,
+    },
+}
+
+# A flat, un-directed read is the thing people notice first and like least, so
+# the default is a lively one rather than "off".
+DEFAULT_TONE = os.getenv("AVATAR_TONE", "upbeat").strip().lower()
+if DEFAULT_TONE not in TONES:
+    DEFAULT_TONE = "upbeat"
+
+
+class _TonedSentenceStream:
+    """Prefixes each tokenized sentence with the delivery direction."""
+
+    def __init__(self, tag: str, inner) -> None:
+        self._tag = tag
+        self._inner = inner
+
+    def push_text(self, text: str) -> None:
+        self._inner.push_text(text)
+
+    def flush(self) -> None:
+        self._inner.flush()
+
+    def end_input(self) -> None:
+        self._inner.end_input()
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        ev = await self._inner.__anext__()
+        if self._tag and ev.token and not ev.token.lstrip().startswith("["):
+            ev.token = f"{self._tag} {ev.token}"
+        return ev
+
+
+class TonedSentenceTokenizer(tokenize.SentenceTokenizer):
+    """Repeat the delivery direction on every sentence.
+
+    The Fish plugin flushes each tokenized sentence to the websocket as its own
+    synthesis unit. A direction placed once at the head of a turn therefore only
+    reaches the first sentence; every sentence after it is synthesized with no
+    direction at all and comes back flat -- which is exactly what a multi-
+    sentence answer sounded like. Wrapping the tokenizer puts the direction on
+    each unit that actually gets sent.
+    """
+
+    def __init__(self, tag: str, inner: tokenize.SentenceTokenizer | None = None) -> None:
+        self._tag = (tag or "").strip()
+        self._inner = inner or tokenize.blingfire.SentenceTokenizer(min_sentence_len=1)
+
+    def tokenize(self, text: str, *, language: str | None = None) -> list[str]:
+        out = self._inner.tokenize(text, language=language)
+        if not self._tag:
+            return out
+        return [t if t.lstrip().startswith("[") else f"{self._tag} {t}" for t in out]
+
+    def stream(self, *, language: str | None = None):
+        return _TonedSentenceStream(self._tag, self._inner.stream(language=language))
+
+
+def resolve_tone(name: str | None) -> tuple[str, dict]:
+    """Look up a tone by id, falling back to the default rather than failing."""
+    key = (name or "").strip().lower()
+    if key not in TONES:
+        key = DEFAULT_TONE
+    return key, TONES[key]
+
+
+# After the avatar speaks, a short window in which an unaddressed turn is still
+# treated as meant for it. Without this the gate kills every follow-up: "Travis,
+# what did we decide?" is answered, "and who's owning it?" is not, and nobody
+# says the name twice in a row.
+#
+# The window cannot be smarter than this. Meeting audio arrives as one mixed
+# stream with no speaker labels, and the Zoom attendees are not participants the
+# agent can see, so there is no way to tell "they are still talking to me" from
+# "they have turned to each other". It is time and a count, nothing else.
+#
+# FOLLOW_UP_MAX is what stops a runaway: every windowed answer restarts the
+# clock, so without a cap the avatar could chain replies into a conversation it
+# is not part of. Set either to 0 to switch the whole thing off.
+def _int_env(name: str, default: int) -> int:
+    try:
+        return max(0, int(float(os.getenv(name, "").strip() or default)))
+    except ValueError:
+        return default
+
+
+FOLLOW_UP_SECONDS = _int_env("FOLLOW_UP_SECONDS", 15)
+FOLLOW_UP_MAX = _int_env("FOLLOW_UP_MAX", 2)
+
 DEFAULT_JOIN_DELAY = 3.5
 
 # Who the avatar is standing in for. It gets asked "who is your owner?" and
@@ -225,15 +371,18 @@ def _load_session_config(ctx: agents.JobContext) -> dict:
         "announce": bool(meta.get("announce", True)),
         "join_delay": _join_delay(meta),
         "owner_name": pick("ownerName", DEFAULT_OWNER_NAME),
+        "tone": resolve_tone(pick("tone", DEFAULT_TONE))[0],
     }
 
     logger.info(
         "Session config: bot_name=%r image=%r voice_id=%s knowledge_id=%s "
-        "persona_chars=%d require_address=%s announce=%s chat=%s join_delay=%.1fs",
+        "persona_chars=%d require_address=%s announce=%s chat=%s join_delay=%.1fs "
+        "tone=%s follow_up=%ss/%s",
         resolved["bot_name"], resolved["image"] or "(default)", resolved["voice_id"],
         resolved["knowledge_id"] or "(none)", len(resolved["persona"]),
         resolved["require_address"], resolved["announce"],
         resolved["listen_to_meeting_chat"], resolved["join_delay"],
+        resolved["tone"], FOLLOW_UP_SECONDS, FOLLOW_UP_MAX,
     )
     return resolved
 
@@ -293,7 +442,7 @@ def _capability_note(owner: str, notes_enabled: bool, emailed_to: bool) -> str:
 
     The note-taking happens entirely outside the conversation -- transcript
     capture, the recap, the PDF and the email are all invisible to the LLM. So
-    when someone asked it to pass a message to Bob it said "I can't relay
+    when someone asked it to pass a message to its owner it said "I can't relay
     messages directly" and then "I don't have the functionality to take notes or
     send messages automatically". Both were false, and it is the one thing the
     avatar most needs to get right: a stand-in that refuses to take a message is
@@ -453,11 +602,64 @@ class MeetingAssistant(Agent):
         self._rag_index = rag_index
         self._require_address = require_address
         self._address_terms = self._build_address_terms(bot_name)
+        self._address_keys = self._build_address_keys(bot_name)
         self._notes = notes
+        # Monotonic, not wall clock: this measures an elapsed gap, and a clock
+        # correction mid-meeting must not open or close the window by accident.
+        self._last_spoke_at: float | None = None
+        self._follow_ups_used = 0
+        # Everything the owner has sent in during this meeting. Injected whole
+        # on every turn rather than only the next one: a fact given at 10:05 is
+        # still true at 10:40, and unlike the knowledge base these are never
+        # subject to retrieval missing them.
+        self._whispers: list[str] = []
+        # Set by "thanks, Carl" or the Stop listening button; cleared the moment
+        # the avatar is named again.
+        self._dismissed = False
 
     # Generic filler, so a bot named "AI Assistant" doesn't match every mention of
     # "assistant" or the letters "ai" inside another word.
     _GENERIC = {"ai", "the", "bot", "avatar", "assistant"}
+
+    # Speech-to-text spells an unusual name however it likes. In one call
+    # "Krendall" came back as "Krendel", "Crindle" and "Crindle" again, so the
+    # literal check never fired and the agent sat silent while being addressed
+    # by name. All three reduce to the same consonant skeleton, which is what
+    # the fallback compares.
+    _DIGRAPHS = (("ph", "f"), ("ck", "k"), ("ch", "k"), ("sh", "s"),
+                 ("th", "t"), ("wh", "w"), ("gh", "g"))
+    _LETTERS = str.maketrans({"c": "k", "q": "k", "z": "s", "y": "i"})
+    _VOWELS = "aeiou"
+    # Short names produce skeletons that collide with ordinary words -- "Sam"
+    # and "some" are both "sm" -- so the fallback only applies above this.
+    _MIN_PHONETIC_LEN = 5
+
+    @classmethod
+    def _phonetic_key(cls, word: str) -> str:
+        """A spelling-independent skeleton: digraphs folded, vowels dropped."""
+        w = "".join(ch for ch in word.lower() if ch.isalpha())
+        for pair, single in cls._DIGRAPHS:
+            w = w.replace(pair, single)
+        w = w.translate(cls._LETTERS)
+        w = "".join(ch for ch in w if ch not in cls._VOWELS)
+        out: list[str] = []
+        for ch in w:
+            if not out or out[-1] != ch:
+                out.append(ch)
+        return "".join(out)
+
+    @classmethod
+    def _build_address_keys(cls, bot_name: str) -> set[str]:
+        """Phonetic keys for the name tokens long enough to be distinctive."""
+        keys: set[str] = set()
+        for token in bot_name.replace("-", " ").split():
+            token = "".join(ch for ch in token.lower() if ch.isalnum())
+            if len(token) < cls._MIN_PHONETIC_LEN or token in cls._GENERIC:
+                continue
+            key = cls._phonetic_key(token)
+            if len(key) >= 3:
+                keys.add(key)
+        return keys
 
     @classmethod
     def _build_address_terms(cls, bot_name: str) -> list[str]:
@@ -472,7 +674,130 @@ class MeetingAssistant(Agent):
 
     def _is_addressed(self, text: str) -> bool:
         low = text.lower()
-        return any(term in low for term in self._address_terms)
+        if any(term in low for term in self._address_terms):
+            return True
+        if not self._address_keys:
+            return False
+        # The name was not spelled the way we expect it. Compare skeletons.
+        for word in re.findall(r"[a-z']+", low):
+            if (len(word) >= self._MIN_PHONETIC_LEN - 1
+                    and self._phonetic_key(word) in self._address_keys):
+                logger.info("Addressed as %r, matched the bot name phonetically", word)
+                return True
+        return False
+
+    # Enough for a running meeting's worth of corrections without letting the
+    # prompt grow without limit.
+    MAX_WHISPERS = 25
+    MAX_WHISPER_CHARS = 4000
+
+    def add_whisper(self, text: str) -> None:
+        """Something the owner has told the avatar mid-meeting."""
+        text = (text or "").strip()
+        if not text:
+            return
+        self._whispers.append(text)
+        while len(self._whispers) > self.MAX_WHISPERS or (
+            sum(len(w) for w in self._whispers) > self.MAX_WHISPER_CHARS
+            and len(self._whispers) > 1
+        ):
+            self._whispers.pop(0)
+
+    # Ways of saying "we're done with you". Matched only on a turn the avatar
+    # was going to answer anyway, so these never wake it up -- they only send it
+    # back to sleep.
+    # Matched against the WHOLE remark, not searched for inside it. Searching
+    # was too loose: "we're good on budget but what about staffing" contains
+    # "we're good" and was being read as a goodbye, silencing the avatar in the
+    # middle of a question.
+    _ONE_DISMISSAL = (
+        r"(?:"
+        r"thanks?(?:\s+(?:so\s+much|a\s+lot|very\s+much))?"
+        r"|thank\s+you(?:\s+(?:so\s+much|a\s+lot|very\s+much))?"
+        r"|that\s+is\s+(?:all|it|everything)"
+        r"|that\s+will\s+be\s+all"
+        r"|we\s+are\s+(?:good|all\s+set|done|finished)"
+        r"|nothing\s+else"
+        r"|no(?:thing)?\s+more\s+questions"
+        r"|you\s+can\s+go"
+        r"|stand\s+down"
+        r")"
+    )
+    # Two run together all the time -- "that's all, thanks" -- so allow a pair,
+    # but no more, or a long sentence could chain its way into a false match.
+    _DISMISSALS = re.compile(
+        rf"{_ONE_DISMISSAL}(?:\s+{_ONE_DISMISSAL})?", re.I
+    )
+
+    # Politeness and filler that can sit around a dismissal without changing it.
+    # "much" and "so" are deliberately absent: either would eat the tail of
+    _FILLER = re.compile(
+        r"\b(ok|okay|alright|all\s+right|well|then|now|for\s+now|please|"
+        r"everyone|everybody|guys|folks|mate|again|appreciate\s+it)\b",
+        re.I,
+    )
+
+    def _is_dismissal(self, text: str) -> bool:
+        """"Thanks, Carl" means stop listening. "Thanks, and what about the
+        budget?" does not.
+
+        The remark is stripped down to its bones -- contractions expanded, the
+        avatar's own name removed, politeness and filler dropped -- and what is
+        left has to be a dismissal and nothing else. Anything with content still
+        attached is a real turn that happened to begin politely, and silencing
+        the avatar on those would be worse than the problem being solved.
+        """
+        if "?" in text:
+            return False
+        low = text.lower()
+        for long, short in (("that's", "that is"), ("thats", "that is"),
+                            ("we're", "we are"), ("were", "we are"),
+                            ("that'll", "that will")):
+            low = low.replace(long, short)
+        # Drop the avatar's own name, however it was spelled.
+        words = [
+            w for w in re.findall(r"[a-z']+", low)
+            if w not in self._address_terms
+            and self._phonetic_key(w) not in self._address_keys
+        ]
+        low = self._FILLER.sub(" ", " ".join(words))
+        low = re.sub(r"\s+", " ", low).strip()
+        if not low:
+            return False
+        return bool(self._DISMISSALS.fullmatch(low))
+
+    def dismiss(self) -> None:
+        """Close the follow-up window until the avatar is named again.
+
+        A flag rather than clearing the clock, because the avatar usually
+        answers the dismissal ("anytime") and that reply would otherwise
+        reopen the very window it was just told to close.
+        """
+        self._dismissed = True
+        self._follow_ups_used = 0
+
+    def note_spoke(self) -> None:
+        """The avatar has finished a turn, so the follow-up window opens now.
+
+        Timed from when it *stops* talking, not when it starts: a fifteen-second
+        answer would otherwise spend most of the window before the other person
+        has had a chance to reply.
+        """
+        self._last_spoke_at = time.monotonic()
+
+    def _within_follow_up_window(self) -> bool:
+        """Is an unaddressed turn still plausibly aimed at the avatar?"""
+        if self._dismissed:
+            return False
+        if not FOLLOW_UP_SECONDS or not FOLLOW_UP_MAX:
+            return False
+        if self._last_spoke_at is None:
+            return False
+        if time.monotonic() - self._last_spoke_at > FOLLOW_UP_SECONDS:
+            # Lapsed. Hand the next conversation a fresh allowance.
+            self._follow_ups_used = 0
+            return False
+        return self._follow_ups_used < FOLLOW_UP_MAX
 
     @staticmethod
     def _turn_text(new_message) -> str:
@@ -497,9 +822,41 @@ class MeetingAssistant(Agent):
             else:
                 self._notes.add("room", text)
 
-        if self._require_address and self._address_terms and not self._is_addressed(text):
-            logger.info("Turn not addressed to the bot, staying quiet: %r", text[:80])
-            raise agents.StopResponse()
+        if self._require_address and self._address_terms:
+            if self._is_addressed(text):
+                # Named outright. Back on duty, and the allowance starts over.
+                self._dismissed = False
+                self._follow_ups_used = 0
+            elif self._within_follow_up_window():
+                self._follow_ups_used += 1
+                logger.info(
+                    "No name, but within %ss of speaking (follow-up %d of %d), "
+                    "treating as addressed: %r",
+                    FOLLOW_UP_SECONDS, self._follow_ups_used, FOLLOW_UP_MAX, text[:80],
+                )
+            else:
+                logger.info("Turn not addressed to the bot, staying quiet: %r", text[:80])
+                raise agents.StopResponse()
+
+        if self._is_dismissal(text):
+            # Answer this one -- "thanks" deserves a reply -- then go quiet
+            # until named again.
+            self.dismiss()
+            logger.info("Dismissed by %r; listening again only when named.", text[:60])
+
+        if self._whispers:
+            # Ahead of the knowledge base on purpose: this is the owner
+            # correcting or updating things live, so it outranks the documents.
+            turn_ctx.add_message(
+                role="system",
+                content=(
+                    "Your owner has sent you these directly during this meeting. "
+                    "They are current and they override anything in your knowledge "
+                    "base that disagrees. Do not read them out as a list or mention "
+                    "being sent them; just use them:\n\n- "
+                    + "\n- ".join(self._whispers)
+                ),
+            )
 
         if not self._rag_index:
             return
@@ -521,6 +878,22 @@ class MeetingAssistant(Agent):
             )
 
 
+def _build_tts(config: dict):
+    """Fish Audio TTS carrying the session's delivery direction."""
+    _, tone = resolve_tone(config["tone"])
+    opts: dict = {
+        # Expressiveness. The direction shapes *how* it reads; this decides how
+        # far the model is willing to move from a flat one.
+        "temperature": tone["temperature"],
+    }
+    # No voice chosen and no DEFAULT_VOICE_ID: let the plugin use its own.
+    if config["voice_id"]:
+        opts["voice_id"] = config["voice_id"]
+    if tone["tag"]:
+        opts["tokenizer"] = TonedSentenceTokenizer(tone["tag"])
+    return fishaudio.TTS(**opts)
+
+
 server = AgentServer()
 
 
@@ -540,7 +913,7 @@ async def zoom_avatar(ctx: agents.JobContext) -> None:
         ),
         # Custom voice via Fish Audio. `voice_id` is the Fish Audio model
         # reference_id; the API key is read from the FISH_API_KEY env var.
-        tts=fishaudio.TTS(voice_id=config["voice_id"]),
+        tts=_build_tts(config),
         turn_handling=TurnHandlingOptions(
             # In a meeting we cannot see who is talking over whom, so don't try
             # to resume a reply that was cut off — it lands on top of a human.
@@ -608,6 +981,14 @@ async def zoom_avatar(ctx: agents.JobContext) -> None:
     )
     logger.info("Taking notes to %s", notes.transcript_path)
 
+    assistant = MeetingAssistant(
+        instructions,
+        rag_index=rag_index,
+        bot_name=config["bot_name"],
+        require_address=config["require_address"],
+        notes=notes,
+    )
+
     # The avatar's own turns. User turns are captured in on_user_turn_completed
     # instead, because that runs before the address gate can drop them.
     @session.on("conversation_item_added")
@@ -619,6 +1000,8 @@ async def zoom_avatar(ctx: agents.JobContext) -> None:
         if isinstance(text, list):
             text = " ".join(str(x) for x in text)
         notes.add("avatar", text)
+        # The avatar has just spoken, so the follow-up window opens here.
+        assistant.note_spoke()
 
     # Runs when the meeting ends or the worker is stopped.
     async def _write_recap(*_args) -> None:
@@ -649,13 +1032,7 @@ async def zoom_avatar(ctx: agents.JobContext) -> None:
     ctx.add_shutdown_callback(_write_recap)
 
     await session.start(
-        agent=MeetingAssistant(
-            instructions,
-            rag_index=rag_index,
-            bot_name=config["bot_name"],
-            require_address=config["require_address"],
-            notes=notes,
-        ),
+        agent=assistant,
         room=ctx.room,
         room_options=room_options,
     )
@@ -686,10 +1063,63 @@ async def zoom_avatar(ctx: agents.JobContext) -> None:
         """
         while True:
             await asyncio.sleep(0.5)
+            await _drain_whispers()
             if STOP_REQUEST.exists():
                 logger.info("Stop requested; leaving the meeting and writing notes.")
                 ctx.shutdown(reason="stopped from the interface")
                 return
+
+    async def _drain_whispers() -> None:
+        """Take anything the owner has sent in and act on it.
+
+        The file is read and truncated in one go, so a line cannot be handled
+        twice, and a write landing during the read is picked up on the next pass
+        rather than lost.
+        """
+        if not WHISPER_QUEUE.exists():
+            return
+        try:
+            raw = WHISPER_QUEUE.read_text(encoding="utf-8")
+            WHISPER_QUEUE.unlink()
+        except OSError as exc:  # noqa: BLE001 - never let this end the meeting
+            logger.warning("Could not read whispers: %s", exc)
+            return
+
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Mode first: "dismiss" is a control and carries no text, so
+            # checking for text before this dropped every one of them silently.
+            mode = str(item.get("mode") or "tell")
+            if mode == "dismiss":
+                assistant.dismiss()
+                logger.info("Told to stop listening from the interface.")
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            say_now = mode == "say"
+
+            # In the transcript either way, so the recap shows what was steered.
+            notes.add("room", text, speaker="sent in by the owner")
+
+            if say_now:
+                logger.info("Whisper (say now): %r", text[:120])
+                session.generate_reply(
+                    instructions=(
+                        "Your owner has just sent you this to pass on to the "
+                        "meeting. Say it now, in your own words and in character, "
+                        "without mentioning that you were sent it:\n\n" + text
+                    )
+                )
+            else:
+                logger.info("Whisper (context): %r", text[:120])
+                assistant.add_whisper(text)
 
     stop_watcher = asyncio.create_task(_watch_for_stop())
 

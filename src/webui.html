@@ -25,6 +25,7 @@
     --bad-bg: #fdecea;  --bad-line: #f5c2bc;  --bad-ink: #8c2318;
     --info-bg: #eaf6fd; --info-line: #bfe2f5; --info-ink: #0b5674;
     --radius: 10px;
+    --fs: 1;   /* text size, set by the slider in the header */
     color-scheme: light;
   }
 
@@ -65,26 +66,41 @@
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+    font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; font-size: calc(15px * var(--fs));
   }
   header {
     background: var(--card); border-bottom: 1px solid var(--line);
     padding: 14px 22px; display: flex; align-items: center; gap: 16px;
     position: sticky; top: 0; z-index: 10;
   }
-  header h1 { margin: 0; font-size: 17px; font-weight: 650; line-height: 1.2; }
+  header h1 { margin: 0; font-size: calc(17px * var(--fs)); font-weight: 650; line-height: 1.2; }
   header h1 span { color: var(--blue); }
   header .brand p {
-    margin: 1px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .09em;
+    margin: 1px 0 0; font-size: calc(11px * var(--fs)); font-weight: 700; letter-spacing: .09em;
     text-transform: uppercase; color: var(--purple);
   }
   .logo { width: 38px; height: 38px; flex: none; }
-  button.icon { padding: 6px 9px; font-size: 15px; line-height: 1; }
+  button.icon { padding: 6px 9px; font-size: calc(15px * var(--fs)); line-height: 1; }
   .spacer { flex: 1; }
+
+  .fs { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .fs input[type=range] { width: 84px; accent-color: var(--blue); cursor: pointer; }
+
+  /* The notes list grows with every meeting and would push the rest of the
+     page down forever. Past about ten rows it scrolls in place instead, with
+     the header pinned so the columns stay readable. Scrolling, deliberately --
+     no paging controls, so the whole history stays one continuous list.
+     Rows are ~55px, so this is roughly ten plus the header; at a larger text
+     size fewer rows show, which is correct. */
+  #meetings { max-height: 600px; overflow-y: auto; }
+  #meetings thead th {
+    position: sticky; top: 0; background: var(--card);
+    box-shadow: inset 0 -1px 0 var(--line);
+  }
 
   .pill {
     display: inline-flex; align-items: center; gap: 7px;
-    padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    padding: 5px 11px; border-radius: 999px; font-size: calc(13px * var(--fs)); font-weight: 600;
     border: 1px solid var(--line); background: var(--raise);
   }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
@@ -101,16 +117,16 @@
     border-radius: var(--radius); padding: 18px; margin-bottom: 18px;
   }
   .card h2 {
-    margin: 0 0 14px; font-size: 13px; font-weight: 700;
+    margin: 0 0 14px; font-size: calc(13px * var(--fs)); font-weight: 700;
     text-transform: uppercase; letter-spacing: .05em; color: var(--purple);
   }
-  label { display: block; font-size: 13px; font-weight: 600; margin: 0 0 5px; }
-  .hint { font-size: 12.5px; color: var(--muted); margin: 5px 0 0; }
+  label { display: block; font-size: calc(13px * var(--fs)); font-weight: 600; margin: 0 0 5px; }
+  .hint { font-size: calc(12.5px * var(--fs)); color: var(--muted); margin: 5px 0 0; }
   .field { margin-bottom: 15px; }
   .field:last-child { margin-bottom: 0; }
 
   input[type=text], input[type=url], select, textarea {
-    width: 100%; padding: 9px 10px; font: inherit; font-size: 14px;
+    width: 100%; padding: 9px 10px; font: inherit; font-size: calc(14px * var(--fs));
     border: 1px solid var(--line); border-radius: 7px; background: var(--field); color: var(--ink);
   }
   textarea { min-height: 96px; resize: vertical; line-height: 1.45; }
@@ -121,7 +137,7 @@
   select[size] { padding: 4px; }
 
   button {
-    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    font: inherit; font-size: calc(14px * var(--fs)); font-weight: 600; cursor: pointer;
     padding: 9px 15px; border-radius: 7px; border: 1px solid var(--line);
     background: var(--field); color: var(--ink);
   }
@@ -129,10 +145,10 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.primary {
     background: var(--blue); border-color: var(--blue); color: #fff;
-    padding: 11px 20px; font-size: 15px;
+    padding: 11px 20px; font-size: calc(15px * var(--fs));
   }
   button.primary:hover:not(:disabled) { background: #0f93c9; border-color: #0f93c9; }
-  button.small { padding: 6px 11px; font-size: 13px; font-weight: 500; }
+  button.small { padding: 6px 11px; font-size: calc(13px * var(--fs)); font-weight: 500; }
   button.danger { color: var(--bad); }
   .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
 
@@ -143,46 +159,46 @@
     border: 1px solid var(--line); background: var(--raise); flex: none;
   }
   .thumb.empty { display: flex; align-items: center; justify-content: center;
-    font-size: 11px; color: var(--muted); text-align: center; padding: 6px; }
+    font-size: calc(11px * var(--fs)); color: var(--muted); text-align: center; padding: 6px; }
 
   .check { display: flex; gap: 9px; align-items: flex-start; margin-bottom: 11px; }
   .check input { margin: 3px 0 0; flex: none; width: 16px; height: 16px; accent-color: var(--blue); }
   .check label { margin: 0; font-weight: 600; }
   .check .hint { margin: 2px 0 0; }
 
-  .msg { padding: 11px 13px; border-radius: 7px; font-size: 13.5px; margin-top: 14px;
+  .msg { padding: 11px 13px; border-radius: 7px; font-size: calc(13.5px * var(--fs)); margin-top: 14px;
     white-space: pre-wrap; word-break: break-word; display: none; }
   .msg.show { display: block; }
   .msg.ok { background: var(--ok-bg); border: 1px solid var(--ok-line); color: var(--ok-ink); }
   .msg.bad { background: var(--bad-bg); border: 1px solid var(--bad-line); color: var(--bad-ink); }
   .msg.info { background: var(--info-bg); border: 1px solid var(--info-line); color: var(--info-ink); }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: calc(13.5px * var(--fs)); }
   th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
-  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; }
+  th { font-size: calc(12px * var(--fs)); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; }
   td a { color: var(--blue); text-decoration: none; font-weight: 600; }
   td a:hover { text-decoration: underline; }
-  .empty-note { color: var(--muted); font-size: 13.5px; }
+  .empty-note { color: var(--muted); font-size: calc(13.5px * var(--fs)); }
 
   details { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
-  details summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+  details summary { cursor: pointer; font-size: calc(13px * var(--fs)); font-weight: 600; color: var(--muted); }
   pre.log {
     background: #0b0d11; color: #cdd3db; padding: 12px; border-radius: 7px;
-    font: 12px/1.5 Consolas, "Courier New", monospace; overflow: auto;
+    font: 12px/1.5 Consolas, "Courier New", monospace; font-size: calc(12px * var(--fs)); overflow: auto;
     max-height: 300px; margin: 11px 0 0; white-space: pre-wrap;
   }
   .filter { margin-bottom: 6px; }
 
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
   .tab {
-    padding: 7px 12px; font-size: 13px; font-weight: 600; border-radius: 7px;
+    padding: 7px 12px; font-size: calc(13px * var(--fs)); font-weight: 600; border-radius: 7px;
     border: 1px solid var(--line); background: var(--field); color: var(--muted);
   }
   .tab.active {
     border-color: var(--blue); color: var(--blue);
     background: color-mix(in srgb, var(--blue) 12%, transparent);
   }
-  .timer { font: 600 13px/1 Consolas, monospace; color: var(--muted); }
+  .timer { font: 600 13px/1 Consolas, monospace; font-size: calc(13px * var(--fs)); color: var(--muted); }
   .timer.hot { color: var(--bad); }
   .meter {
     height: 6px; border-radius: 999px; background: var(--line);
@@ -202,10 +218,10 @@
     align-items: center; margin-top: 8px;
   }
   .trim-row input[type=range] { width: 100%; accent-color: var(--blue); }
-  .trim-label { font: 600 12px/1 Consolas, monospace; color: var(--muted); }
+  .trim-label { font: 600 12px/1 Consolas, monospace; font-size: calc(12px * var(--fs)); color: var(--muted); }
   .candidate {
     display: flex; gap: 10px; align-items: center; padding: 9px 0;
-    border-bottom: 1px solid var(--line); font-size: 13.5px;
+    border-bottom: 1px solid var(--line); font-size: calc(13.5px * var(--fs));
   }
   .candidate:last-child { border-bottom: 0; }
   .candidate audio { height: 32px; flex: 1; min-width: 0; }
@@ -214,7 +230,7 @@
 <body>
 
 <header>
-  <img src="/brand/logo-small.png" alt="" class="logo" id="logo" onerror="this.remove()">
+  <img src="/brand/logo-small.png" alt="" class="logo" onerror="this.remove()">
   <div class="brand">
     <h1>Zoom <span>Avatar Generator</span></h1>
     <p id="brandName" hidden></p>
@@ -223,6 +239,11 @@
   <span class="pill"><span class="dot off" id="dot"></span><span id="workerText">checking…</span></span>
   <button class="small" id="btnStart">Start agent</button>
   <button class="small" id="btnStop">Stop</button>
+  <label class="fs" title="Text size">
+    <span style="font-size: calc(11px * var(--fs))">A</span>
+    <input type="range" id="fsRange" min="80" max="160" step="5" value="100" aria-label="Text size">
+    <span style="font-size: calc(18px * var(--fs))">A</span>
+  </label>
   <button class="small icon" id="btnTheme" title="Switch between light and dark">🌙</button>
 </header>
 
@@ -272,6 +293,13 @@
           <select id="voice"></select>
           <p class="hint" id="voiceHint"></p>
         </div>
+        <div class="field">
+          <label for="tone">Tone</label>
+          <select id="tone"></select>
+          <p class="hint">How the avatar delivers its lines. A trained voice reads
+            flat by default; this tells it to sound engaged. "Hear this voice"
+            uses the tone selected here.</p>
+        </div>
         <div class="row">
           <button class="small" id="btnPreviewVoice">Hear this voice</button>
           <button class="small" id="btnRefreshVoices">Refresh from Fish Audio</button>
@@ -290,7 +318,7 @@
 
           <div class="field" style="margin-top:14px">
             <label for="newVoiceName">Name for the new voice</label>
-            <input type="text" id="newVoiceName" placeholder="e.g. Bob Warm Narration">
+            <input type="text" id="newVoiceName" placeholder="e.g. Warm Narration">
           </div>
 
           <!-- upload -->
@@ -346,7 +374,7 @@
           </div>
 
           <div class="row" style="margin-top:14px">
-            <button class="primary" id="btnCreateVoice" style="padding:9px 16px;font-size:14px">Create voice</button>
+            <button class="primary" id="btnCreateVoice" style="padding:9px 16px;font-size: calc(14px * var(--fs))">Create voice</button>
             <button class="small" id="btnCancelVoice">Cancel</button>
           </div>
           <div class="msg" id="makerMsg"></div>
@@ -422,6 +450,23 @@
       </div>
 
       <div class="card">
+        <h2>Send a line into the meeting</h2>
+        <div class="field">
+          <textarea id="whisperText" rows="2" placeholder="The launch moved to November 3rd."></textarea>
+          <p class="hint">Only available while the avatar is in a meeting. Use it to
+            correct it, tell it something that just changed, or have it pass a
+            message on. Anything you send stays true for the rest of the call and
+            outranks the knowledge base.</p>
+        </div>
+        <div class="row">
+          <button class="small" id="btnTell">Tell it this</button>
+          <button class="small" id="btnSay">Say it out loud now</button>
+          <button class="small" id="btnHush">Stop listening</button>
+        </div>
+        <div class="msg" id="whisperMsg"></div>
+      </div>
+
+      <div class="card">
         <h2>Recent meeting notes</h2>
         <div class="msg" id="pendingMsg"></div>
         <div id="meetings"><p class="empty-note">No meetings yet.</p></div>
@@ -451,7 +496,7 @@ const $ = (id) => document.getElementById(id);
 // ---------------------------------------------------------------- theme
 // An explicit choice is stamped on <html> and remembered. With no choice
 // stored, nothing is stamped and the OS preference applies via CSS.
-const THEME_KEY = "bdm-avatar-theme";
+const THEME_KEY = "zoom-avatar-theme";
 
 function systemPrefersDark() {
   return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -571,6 +616,19 @@ function updateThumb() {
   }
 }
 
+function fillTones(selected) {
+  const sel = $("tone");
+  const want = selected || sel.value || (STATE.defaults && STATE.defaults.tone) || "";
+  sel.innerHTML = "";
+  for (const t of STATE.tones || []) {
+    const o = document.createElement("option");
+    o.value = t.id;
+    o.textContent = t.label;
+    sel.appendChild(o);
+  }
+  if (want) sel.value = want;
+}
+
 function fillVoices(selected) {
   const sel = $("voice");
   const want = selected !== undefined ? selected : sel.value;
@@ -651,6 +709,13 @@ function fillMeetings() {
 function fillWorker(w, log) {
   const dot = $("dot");
   let text, status;
+  if (STATE.stopping) {
+    // The poll keeps running through a stop, so without this it repaints
+    // "agent ready" over the top and the click looks ignored.
+    dot.className = "dot starting";
+    $("workerText").textContent = "stopping…";
+    return;
+  }
   if (!w.running) {
     dot.className = "dot off";
     text = "agent off";
@@ -684,10 +749,14 @@ async function loadState() {
   allVoices = s.voices || [];
   fillAvatars();
   fillVoices();
+  fillTones();
   fillKnowledge();
   fillPresets();
   fillMeetings();
   fillWorker(s.worker);
+  STATE.tones = s.tones || [];
+  STATE.defaults = s.defaults || {};
+  fillTones();
   if (s.voiceError) $("voiceHint").textContent = "Could not reach Fish Audio: " + s.voiceError;
   if (s.defaults && s.defaults.botName && !$("botName").value) $("botName").value = s.defaults.botName;
   if (s.defaults && s.defaults.ownerName && !$("ownerName").value) $("ownerName").value = s.defaults.ownerName;
@@ -723,6 +792,7 @@ $("preset").addEventListener("change", () => {
   $("voiceFilter").value = "";
   fillVoices(p.voiceId || "");
   fillKnowledge(p.knowledgeId || "");
+  fillTones(p.tone || "");
   $("persona").value = p.persona || "";
   $("presetName").value = p.label || "";
   // Only overwrite the owner if the preset actually names one, so loading an
@@ -816,6 +886,7 @@ $("btnSavePreset").addEventListener("click", async () => {
         knowledgeId: $("knowledge").value,
         persona: $("persona").value.trim(),
         ownerName: $("ownerName").value.trim(),
+        tone: $("tone").value,
       }),
     });
     STATE.presets = r.presets;
@@ -858,12 +929,14 @@ $("btnStart").addEventListener("click", async () => {
 
 $("btnStop").addEventListener("click", async () => {
   $("btnStop").disabled = true;
+  STATE.stopping = true;
+  $("dot").className = "dot starting";
+  $("workerText").textContent = "stopping…";
   // The graceful stop waits for the agent to summarize, render and email, which
   // takes a few seconds. Say so, or it looks hung.
   show($("sendMsg"), "Asking the avatar to leave the meeting and write its notes. This can take up to a minute…", "info");
   try {
     const r = await api("/api/worker/stop", { method: "POST" });
-    fillWorker(r);
     if (r.meetings) { STATE.meetings = r.meetings; fillMeetings(); }
     const n = (r.backfilled || []).length;
     let msg;
@@ -875,12 +948,18 @@ $("btnStop").addEventListener("click", async () => {
       msg = "The avatar left the meeting and wrote its notes.";
     }
     if (n) msg += ` Filled in notes for ${n} meeting${n > 1 ? "s" : ""} from the transcript.`;
+    STATE.stopping = false;
+    fillWorker(r);
     show($("sendMsg"), msg, "ok");
     refreshPending();
   } catch (e) {
+    STATE.stopping = false;
+    $("workerText").textContent = "stop failed";
     show($("sendMsg"), "Could not stop: " + e.message, "bad");
+  } finally {
+    STATE.stopping = false;
+    $("btnStop").disabled = false;
   }
-  $("btnStop").disabled = false;
 });
 
 async function refreshPending() {
@@ -943,6 +1022,7 @@ $("btnGo").addEventListener("click", async () => {
     knowledgeId: $("knowledge").value,
     persona: $("persona").value.trim(),
     ownerName: $("ownerName").value.trim(),
+    tone: $("tone").value,
     requireAddress: $("requireAddress").checked,
     noAnnounce: !$("announce").checked,
   };
@@ -1138,6 +1218,15 @@ function stopRecording() {
 // panel's shared message box further down the page.
 function micProblem(err) {
   const name = (err && err.name) || "";
+  // Browsers only hand over the microphone in a secure context. Reaching this
+  // page over plain http on a LAN address fails before any permission prompt,
+  // so name the real cause rather than reporting a blocked-permission error.
+  if (!window.isSecureContext) {
+    return "Your browser will not allow microphone access over a plain http:// " +
+      "address." + "\n\n" + "Open this page over https:// instead — the " +
+      "interface window prints the right address when ALLOW_LAN is on. Or use " +
+      "the Upload audio tab and record with another app.";
+  }
   if (name === "NotAllowedError" || name === "SecurityError") {
     return "Your browser blocked microphone access.\n\n" +
       "Click the icon at the left of the address bar (the tune/lock icon), set " +
@@ -1398,7 +1487,7 @@ $("btnPreviewVoice").addEventListener("click", async () => {
     const res = await fetch("/api/voices/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ voiceId: id }),
+      body: JSON.stringify({ voiceId: id, tone: $("tone").value }),
     });
     if (!res.ok) {
       let detail = res.statusText;
@@ -1420,7 +1509,64 @@ $("btnPreviewVoice").addEventListener("click", async () => {
 window.addEventListener("resize", () => { if (audioBuffer) drawWave(); });
 
 applyStoredTheme();
+// Sending a line into a running meeting.
+async function sendWhisper(mode) {
+  const box = $("whisperText");
+  const text = box.value.trim();
+  if (!text && mode !== "dismiss") {
+    show($("whisperMsg"), "Type something to send first.", "bad");
+    return;
+  }
+  $("btnTell").disabled = true; $("btnSay").disabled = true;
+  try {
+    await api("/api/whisper", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, mode }),
+    });
+    box.value = "";
+    const said = {
+      say: "Sent — the avatar will say it in its next breath.",
+      tell: "Sent — it knows this now and will use it from here on.",
+      dismiss: "It has stopped listening. Say its name to bring it back.",
+    };
+    show($("whisperMsg"), said[mode], "ok");
+  } catch (e) {
+    show($("whisperMsg"), e.message, "bad");
+  } finally {
+    $("btnTell").disabled = false; $("btnSay").disabled = false;
+  }
+}
+$("btnTell").addEventListener("click", () => sendWhisper("tell"));
+$("btnHush").addEventListener("click", () => sendWhisper("dismiss"));
+$("btnSay").addEventListener("click", () => sendWhisper("say"));
+// Enter sends; Shift+Enter for a new line, as in every chat box.
+$("whisperText").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendWhisper("tell"); }
+});
+
 $("btnTheme").addEventListener("click", toggleTheme);
+
+// Text size. Scales every font through one custom property, so nothing else
+// moves -- this is deliberately not a zoom, which would scale the whole layout.
+const FS_KEY = "zoom-avatar.textScale";
+function applyTextScale(percent) {
+  document.documentElement.style.setProperty("--fs", (percent / 100).toFixed(2));
+}
+(function initTextScale() {
+  let percent = 100;
+  try {
+    percent = parseInt(localStorage.getItem(FS_KEY), 10) || 100;
+  } catch (e) { /* private window: fall back to the default */ }
+  percent = Math.min(160, Math.max(80, percent));
+  const slider = $("fsRange");
+  slider.value = percent;
+  applyTextScale(percent);
+  slider.addEventListener("input", () => {
+    applyTextScale(slider.value);
+    try { localStorage.setItem(FS_KEY, slider.value); } catch (e) { /* nothing to do */ }
+  });
+})();
 // Follow the OS while no explicit choice is stored.
 if (window.matchMedia) {
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintThemeButton);

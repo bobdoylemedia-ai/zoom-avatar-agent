@@ -4,7 +4,6 @@
 __pycache__/
 *.pyc
 .fastembed_cache/
-uv.lock
 
 # Avatar portraits and knowledge sources are personal / licensed material.
 avatars/*
@@ -21,3 +20,6 @@ brand/*
 meetings/*
 !meetings/.gitkeep
 logs/
+
+# Machine-specific TLS certificate for reaching the panel over the LAN.
+certs/
