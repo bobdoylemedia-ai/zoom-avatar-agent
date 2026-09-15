@@ -222,6 +222,13 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+# What the avatar says when told "thanks" -- instantly, without the model.
+# Set DISMISS_REPLY= (empty) in .env.local to have it stand down silently.
+DISMISS_REPLY = (
+    "Anytime." if os.environ.get("DISMISS_REPLY") is None
+    else os.environ["DISMISS_REPLY"].strip()
+)
+
 FOLLOW_UP_SECONDS = _int_env("FOLLOW_UP_SECONDS", 15)
 FOLLOW_UP_MAX = _int_env("FOLLOW_UP_MAX", 2)
 
@@ -723,11 +730,30 @@ class MeetingAssistant(Agent):
         r"|stand\s+down"
         r")"
     )
-    # Two run together all the time -- "that's all, thanks" -- so allow a pair,
-    # but no more, or a long sentence could chain its way into a false match.
-    _DISMISSALS = re.compile(
-        rf"{_ONE_DISMISSAL}(?:\s+{_ONE_DISMISSAL})?", re.I
+    # Acknowledgements that ride along in front of a goodbye. On their own they
+    # are not a goodbye -- "yes" just means yes -- so they may only come before
+    # one. Real transcripts from a live call that the pair-only version missed:
+    #   "No. That's it. Thanks, Carl."      "No, that's good. Thanks, Carl."
+    _ONE_ACK = (
+        r"(?:"
+        r"no|nope|yes|yeah|yep|sure|fine|good|great|perfect|cool|nice|awesome"
+        r"|got\s+it|sounds\s+good|all\s+good"
+        r"|that\s+is\s+(?:good|great|perfect|fine)"
+        r")"
     )
+    # Any run of acknowledgements and goodbyes, as long as it ENDS on a goodbye
+    # and contains nothing else. Matched against the whole remark, so a real
+    # question that happens to start politely never qualifies.
+    _DISMISSALS = re.compile(
+        rf"(?:(?:{_ONE_ACK}|{_ONE_DISMISSAL})\s+)*{_ONE_DISMISSAL}", re.I
+    )
+
+    # Contractions expanded word by word. Substring replacement would also rewrite
+    # the inside of longer words.
+    _EXPAND = {
+        "that's": "that is", "thats": "that is", "that'll": "that will",
+        "we're": "we are", "it's": "it is",
+    }
 
     # Politeness and filler that can sit around a dismissal without changing it.
     # "much" and "so" are deliberately absent: either would eat the tail of
@@ -749,17 +775,12 @@ class MeetingAssistant(Agent):
         """
         if "?" in text:
             return False
-        low = text.lower()
-        for long, short in (("that's", "that is"), ("thats", "that is"),
-                            ("we're", "we are"), ("were", "we are"),
-                            ("that'll", "that will")):
-            low = low.replace(long, short)
-        # Drop the avatar's own name, however it was spelled.
-        words = [
-            w for w in re.findall(r"[a-z']+", low)
-            if w not in self._address_terms
-            and self._phonetic_key(w) not in self._address_keys
-        ]
+        words: list[str] = []
+        for w in re.findall(r"[a-z']+", text.lower().replace("\u2019", "'")):
+            # Drop the avatar's own name, however it was spelled.
+            if w in self._address_terms or self._phonetic_key(w) in self._address_keys:
+                continue
+            words.extend(self._EXPAND.get(w, w).split())
         low = self._FILLER.sub(" ", " ".join(words))
         low = re.sub(r"\s+", " ", low).strip()
         if not low:
@@ -839,10 +860,20 @@ class MeetingAssistant(Agent):
                 raise agents.StopResponse()
 
         if self._is_dismissal(text):
-            # Answer this one -- "thanks" deserves a reply -- then go quiet
-            # until named again.
+            # Stand down WITHOUT asking the model to reply. Letting "thanks"
+            # through to the model, with the knowledge base attached, produced
+            # a speech about what the avatar can do -- or a random fact from the
+            # documents -- and took up to 13 seconds to arrive. By then the room
+            # had moved on, so it sounded like the avatar waking up by itself.
+            # A fixed line is instant and can't wander off-topic.
             self.dismiss()
             logger.info("Dismissed by %r; listening again only when named.", text[:60])
+            if DISMISS_REPLY:
+                try:
+                    self.session.say(DISMISS_REPLY, allow_interruptions=True)
+                except Exception as exc:  # noqa: BLE001 - never break the turn
+                    logger.warning("Could not acknowledge the dismissal: %s", exc)
+            raise agents.StopResponse()
 
         if self._whispers:
             # Ahead of the knowledge base on purpose: this is the owner

@@ -534,6 +534,16 @@ Known weaknesses of the crude version, in the order they'll bite:
    phrases are only matched on a turn already being answered and only when the
    turn is short and not a question, so "thanks, and what about the budget?"
    stays a question rather than a goodbye.
+
+   **A dismissal must never reach the model.** The first version let "thanks"
+   through to be answered. With a knowledge base attached, the model replied with
+   a speech about what it could do, or a random fact from the documents, and took
+   up to 13 seconds -- so it spoke after the room had moved on and looked like the
+   avatar waking up by itself. A dismissal now raises `StopResponse` and says a
+   fixed line through `session.say` (`DISMISS_REPLY`, default "Anytime.", empty
+   for silence), which is instant and cannot wander. Recognition also had to
+   accept a run of acknowledgements before the goodbye: "No. That's it. Thanks,
+   Carl." and "No, that's good. Thanks, Carl." were both missed in a live call.
 2. **STT mangles names.** ~~Needs fuzzy matching.~~ **Partly fixed.** A real
    call proved it: a bot named "Krendall" was transcribed "Krendel", "Crindle"
    and "Crindle" in three consecutive turns, the literal check missed every

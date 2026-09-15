@@ -264,7 +264,9 @@
           <input type="text" id="presetName" placeholder="Name to save as" style="flex:1;min-width:150px">
           <button class="small" id="btnSavePreset">Save preset</button>
           <button class="small danger" id="btnDeletePreset">Delete</button>
+          <button class="small" id="btnStartFresh" title="Clear the face, voice, tone, knowledge base, persona and names">Start fresh</button>
         </div>
+        <div class="msg" id="presetMsg"></div>
       </div>
 
       <div class="card">
@@ -399,7 +401,8 @@
       <div class="card">
         <h2>Persona</h2>
         <div class="field">
-          <textarea id="persona" placeholder="Leave empty to use the preset's persona, or the built-in default."></textarea>
+          <textarea id="persona" placeholder="Leave empty for the built-in default."></textarea>
+          <p class="hint" id="personaSource" hidden></p>
           <p class="hint">How it should behave. The knowledge base supplies the facts.</p>
         </div>
       </div>
@@ -785,6 +788,45 @@ async function pollWorker() {
 
 // ---------------------------------------------------------------- actions
 
+// Loading a preset fills every field -- including the persona, which sits well
+// below the fold. Change the face, voice and knowledge base for a new avatar
+// and the old persona silently rides along: an avatar built around one
+// knowledge base spent a whole call in the previous preset's character,
+// because that persona was still in the box. So the box says where its text
+// came from.
+function markPersonaSource(label) {
+  const note = $("personaSource");
+  if (label) {
+    note.textContent = `This persona came from the "${label}" preset. Clear it, or click Start fresh, before building a different avatar.`;
+    note.hidden = false;
+  } else {
+    note.textContent = "";
+    note.hidden = true;
+  }
+}
+
+$("persona").addEventListener("input", () => {
+  // Once the text has been edited it's yours, not the preset's.
+  markPersonaSource("");
+});
+
+function startFresh() {
+  const d = STATE.defaults || {};
+  $("preset").value = "";
+  $("presetName").value = "";
+  fillAvatars("");
+  $("voiceFilter").value = "";
+  fillVoices("");
+  fillTones(d.tone || "");
+  fillKnowledge("");
+  $("persona").value = "";
+  markPersonaSource("");
+  $("botName").value = d.botName || "";
+  $("ownerName").value = d.ownerName || "";
+  show($("presetMsg"), "Cleared. Face, voice, tone, knowledge base, persona and names are back to their defaults — nothing from the last avatar will be sent. Your meeting link is kept.", "ok");
+}
+$("btnStartFresh").addEventListener("click", startFresh);
+
 $("preset").addEventListener("change", () => {
   const p = STATE.presets.find(x => x.id === $("preset").value);
   if (!p) return;
@@ -794,6 +836,7 @@ $("preset").addEventListener("change", () => {
   fillKnowledge(p.knowledgeId || "");
   fillTones(p.tone || "");
   $("persona").value = p.persona || "";
+  markPersonaSource(p.persona ? (p.label || p.id) : "");
   $("presetName").value = p.label || "";
   // Only overwrite the owner if the preset actually names one, so loading an
   // older preset doesn't silently blank a field that was already right.

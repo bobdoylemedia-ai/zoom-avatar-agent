@@ -77,7 +77,9 @@ Your browser opens on the control panel.
    it's green is refused — a worker that is running but not yet registered would
    silently drop the job.
 2. Choose a **face**, a **voice**, a **tone** and a **knowledge base** — or load a
-   **preset**, and save your own with **Save preset**.
+   **preset**, and save your own with **Save preset**. Building a different
+   avatar after loading a preset? Click **Start fresh** first, so none of the
+   preset's settings — its persona especially — carry over.
 3. Set **Attending on behalf of** — the avatar says who it stands in for, and
    promises messages will reach that person by name.
 4. Paste the **meeting link** and click **Send avatar to meeting**.
@@ -132,7 +134,12 @@ To end the exchange early, say one of these — the name is optional:
 > thanks · thank you · that's all · that's it · we're good · we're all set ·
 > we're done · nothing else · no more questions · you can go · stand down
 
-It replies, then stays quiet until it hears its name again.
+Short acknowledgements in front are fine too: "No, that's good. Thanks."
+
+It answers instantly with a short line — "Anytime." by default, set by
+`DISMISS_REPLY`, or leave that empty for silence — then stays quiet until it
+hears its name again. The goodbye is never sent to the language model, so it
+can't reply with a speech.
 
 ### Sending it lines mid-meeting
 
@@ -251,6 +258,7 @@ All in `.env.local`. See `.env.example` for descriptions.
 | `AVATAR_TONE` | `upbeat` | `off`, `warm`, `upbeat`, `excited`, `professional`, `calm` |
 | `FOLLOW_UP_SECONDS` | `15` | How long it keeps listening after speaking |
 | `FOLLOW_UP_MAX` | `2` | Unaddressed follow-ups before its name is needed |
+| `DISMISS_REPLY` | `Anytime.` | What it says when told "thanks"; empty for silence |
 | `JOIN_DELAY_SECONDS` | `3.5` | Pause before its opening line |
 | `NOTES_FORMATS` | `pdf` | `pdf`, `docx`, `both`, `none` |
 | `NOTES_EMAIL_TO` | — | Where to email the notes |
